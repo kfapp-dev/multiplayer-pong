@@ -47,8 +47,10 @@ export class MultiplayerPeer {
     // Workaround: PeerJS ignores config.iceServers in the Peer constructor.
     // Must override util.defaultConfig before creating the Peer object.
     // Uses 'urls' (plural) as required by PeerJS internal config format.
-    if ((Peer as any).util?.defaultConfig) {
-      (Peer as any).util.defaultConfig = {
+    const PeerUtil = (Peer as any).util;
+    log("createHost", "Peer.util exists:", !!PeerUtil, "defaultConfig:", JSON.stringify(PeerUtil?.defaultConfig));
+    if (PeerUtil?.defaultConfig) {
+      PeerUtil.defaultConfig = {
         iceServers: [
           { urls: "stun:stun.l.google.com:19302" },
           { urls: "stun:stun1.l.google.com:19302" },
@@ -63,6 +65,7 @@ export class MultiplayerPeer {
         ],
         sdpSemantics: "unified-plan",
       };
+      log("createHost", "defaultConfig after override:", JSON.stringify(PeerUtil.defaultConfig));
     }
     this.peerId = "pong-" + Math.random().toString(36).substring(2, 10);
     this.isHostPeer = true;
@@ -132,8 +135,10 @@ export class MultiplayerPeer {
     // Workaround: PeerJS ignores config.iceServers in the Peer constructor.
     // Must override util.defaultConfig before creating the Peer object.
     // Uses 'urls' (plural) as required by PeerJS internal config format.
-    if ((Peer as any).util?.defaultConfig) {
-      (Peer as any).util.defaultConfig = {
+    const PeerUtil = (Peer as any).util;
+    log("joinHost", "Peer.util exists:", !!PeerUtil, "defaultConfig:", JSON.stringify(PeerUtil?.defaultConfig));
+    if (PeerUtil?.defaultConfig) {
+      PeerUtil.defaultConfig = {
         iceServers: [
           { urls: "stun:stun.l.google.com:19302" },
           { urls: "stun:stun1.l.google.com:19302" },
@@ -148,6 +153,7 @@ export class MultiplayerPeer {
         ],
         sdpSemantics: "unified-plan",
       };
+      log("joinHost", "defaultConfig after override:", JSON.stringify(PeerUtil.defaultConfig));
     }
     this.isHostPeer = false;
     this.peerId = "pong-" + Math.random().toString(36).substring(2, 10);
