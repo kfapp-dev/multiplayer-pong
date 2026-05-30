@@ -349,6 +349,7 @@ export default function Game() {
     peer.onConnect(() => {
       log("joinHost onConnect", "connected to host!");
       setConnStatus("Connected to host!");
+      peer.sendReady();
     });
 
     peer.onStatus((status: string) => {

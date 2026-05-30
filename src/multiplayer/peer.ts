@@ -15,8 +15,7 @@ export class MultiplayerPeer {
   private messageHandler: MessageHandler | null = null;
   private statusHandler: StatusHandler | null = null;
   private connectHandler: ConnectHandler | null = null;
-  private peerId: string = "";
-  private connectTimer: ReturnType<typeof setTimeout> | null = null;
+  private _peerId: string = "";
 
   onMessage(handler: MessageHandler): void {
     this.messageHandler = handler;
@@ -35,47 +34,67 @@ export class MultiplayerPeer {
   }
 
   get id(): string {
-    return this.peerId;
+    return this._peerId;
   }
 
   get connected(): boolean {
     return this.conn !== null && this.conn.open;
   }
 
-  async createHost(): Promise<string> {
-    const Peer = (await import("peerjs")).default;
-    // Workaround: PeerJS ignores config.iceServers in the Peer constructor.
-    // Must override util.defaultConfig before creating the Peer object.
-    // Uses 'urls' (plural) as required by PeerJS internal config format.
-    const PeerUtil = (Peer as any).util;
-    if (PeerUtil?.defaultConfig) {
-      PeerUtil.defaultConfig = {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-          {
-            urls: [
-              "turn:178.105.26.234:3478",
-              "turn:178.105.26.234:3478?transport=tcp",
-            ],
-            username: "game",
-            credential: "pongturn2026",
-          },
+  /**
+   * Patch RTCPeerConnection BEFORE PeerJS loads so that PeerJS's
+   * internal PeerConnections inherit our ICE servers.
+   */
+  private static patchIceServers(): void {
+    const OrigPC = window.RTCPeerConnection;
+    if (!OrigPC) return;
+
+    const ICE_SERVERS: RTCIceServer[] = [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      {
+        urls: [
+          "turn:178.105.26.234:3478",
+          "turn:178.105.26.234:3478?transport=tcp",
         ],
-        sdpSemantics: "unified-plan",
+        username: "game",
+        credential: "pongturn2026",
+      },
+    ];
+
+    // Only patch once
+    if ((window as any).__pongPCReturned) return;
+    (window as any).__pongPCReturned = true;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const PatchedPC = function (this: any, config?: any) {
+      const merged: RTCConfiguration = {
+        ...config,
+        iceServers: [...ICE_SERVERS, ...(config?.iceServers || [])],
       };
-    }
-    this.peerId = "pong-" + Math.random().toString(36).substring(2, 10);
+      return new OrigPC(merged);
+    };
+    PatchedPC.prototype = OrigPC.prototype;
+    (window as any).RTCPeerConnection = PatchedPC;
+
+    log("peer", "RTCPeerConnection patched with TURN/STUN servers");
+  }
+
+  async createHost(): Promise<string> {
+    // Patch BEFORE importing PeerJS
+    MultiplayerPeer.patchIceServers();
+
+    const Peer = (await import("peerjs")).default;
+    this._peerId = "pong-" + Math.random().toString(36).substring(2, 10);
     this.isHostPeer = true;
-    log("createHost", "peerId=", this.peerId);
+    log("createHost", "peerId=", this._peerId);
 
     return new Promise((resolve, reject) => {
       try {
-        this.peer = new Peer(this.peerId, {
-          debug: process.env.NODE_ENV === "development" ? 2 : 0,
+        this.peer = new Peer(this._peerId, {
+          debug: 0,
         });
       } catch (err) {
-        log("createHost", "Peer constructor error:", err);
         reject(err);
         return;
       }
@@ -87,30 +106,23 @@ export class MultiplayerPeer {
 
       this.peer.on("connection", (conn: any) => {
         log("createHost", "incoming connection from", conn.peer);
-        this.conn = conn;
 
-        // Try to access the underlying RTCPeerConnection and set ICE servers
-        const pc = conn.peerConnection || conn._pc || conn.provider?.peerConnection;
+        // Access the underlying RTCPeerConnection and log ICE config
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const anyConn = conn as any;
+        const pc =
+          anyConn.peerConnection ||
+          anyConn._pc ||
+          anyConn.provider?.peerConnection;
         if (pc) {
-          log("createHost", "found peerConnection, setting ICE config");
-          try {
-            pc.setConfiguration({
-              iceServers: [
-                { urls: "stun:stun.l.google.com:19302" },
-                { urls: ["turn:178.105.26.234:3478", "turn:178.105.26.234:3478?transport=tcp"], username: "game", credential: "pongturn2026" },
-              ],
-            });
-            // Trigger ICE restart to use new config
-            if (typeof pc.restartIce === "function") {
-              pc.restartIce();
-              log("createHost", "ICE restart triggered");
-            }
-          } catch (e) {
-            log("createHost", "peerConnection config error:", e);
-          }
-        } else {
-          log("createHost", "no peerConnection found on conn object");
+          log(
+            "createHost",
+            "peerConnection ICE servers:",
+            JSON.stringify(pc.getConfiguration?.()?.iceServers?.map((s: any) => s.urls) || "unknown")
+          );
         }
+
+        this.conn = conn;
 
         conn.on("open", () => {
           log("createHost", "data channel open with", conn.peer);
@@ -136,6 +148,7 @@ export class MultiplayerPeer {
 
       this.peer.on("error", (err: any) => {
         log("createHost", "peer error:", err.type, err.message || err);
+        if (err.type === "peer-unavailable") return; // guest not connected yet
         this.statusHandler?.("error");
         reject(err);
       });
@@ -144,47 +157,24 @@ export class MultiplayerPeer {
         log("createHost", "peer disconnected from signaling");
         this.statusHandler?.("disconnected");
       });
-
-      this.peer.on("close", () => {
-        log("createHost", "peer closed");
-      });
     });
   }
 
   async joinHost(hostId: string): Promise<void> {
+    // Patch BEFORE importing PeerJS
+    MultiplayerPeer.patchIceServers();
+
     const Peer = (await import("peerjs")).default;
-    // Workaround: PeerJS ignores config.iceServers in the Peer constructor.
-    // Must override util.defaultConfig before creating the Peer object.
-    // Uses 'urls' (plural) as required by PeerJS internal config format.
-    const PeerUtil = (Peer as any).util;
-    if (PeerUtil?.defaultConfig) {
-      PeerUtil.defaultConfig = {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-          {
-            urls: [
-              "turn:178.105.26.234:3478",
-              "turn:178.105.26.234:3478?transport=tcp",
-            ],
-            username: "game",
-            credential: "pongturn2026",
-          },
-        ],
-        sdpSemantics: "unified-plan",
-      };
-    }
     this.isHostPeer = false;
-    this.peerId = "pong-" + Math.random().toString(36).substring(2, 10);
-    log("joinHost", "peerId=", this.peerId, "hostId=", hostId);
+    this._peerId = "pong-" + Math.random().toString(36).substring(2, 10);
+    log("joinHost", "peerId=", this._peerId, "hostId=", hostId);
 
     return new Promise((resolve, reject) => {
       try {
-        this.peer = new Peer(this.peerId, {
-          debug: process.env.NODE_ENV === "development" ? 2 : 0,
+        this.peer = new Peer(this._peerId, {
+          debug: 0,
         });
       } catch (err) {
-        log("joinHost", "Peer constructor error:", err);
         reject(err);
         return;
       }
@@ -195,35 +185,28 @@ export class MultiplayerPeer {
         const conn = this.peer!.connect(hostId, {
           reliable: true,
         });
-        this.conn = conn;
 
-        // Try to access the underlying RTCPeerConnection and set ICE servers
-        const pc = conn.peerConnection || conn._pc || conn.provider?.peerConnection;
+        // Access the underlying RTCPeerConnection and log ICE config
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const anyConn = conn as any;
+        const pc =
+          anyConn.peerConnection ||
+          anyConn._pc ||
+          anyConn.provider?.peerConnection;
         if (pc) {
-          log("joinHost", "found peerConnection, setting ICE config");
-          try {
-            pc.setConfiguration({
-              iceServers: [
-                { urls: "stun:stun.l.google.com:19302" },
-                { urls: ["turn:178.105.26.234:3478", "turn:178.105.26.234:3478?transport=tcp"], username: "game", credential: "pongturn2026" },
-              ],
-            });
-            if (typeof pc.restartIce === "function") {
-              pc.restartIce();
-              log("joinHost", "ICE restart triggered");
-            }
-          } catch (e) {
-            log("joinHost", "peerConnection config error:", e);
-          }
-        } else {
-          log("joinHost", "no peerConnection found on conn object");
+          log(
+            "joinHost",
+            "peerConnection ICE servers:",
+            JSON.stringify(pc.getConfiguration?.()?.iceServers?.map((s: any) => s.urls) || "unknown")
+          );
         }
 
+        this.conn = conn;
+
         conn.on("open", () => {
-          log("joinHost", "data channel open to host");
+          log("joinHost", "data channel open");
           this.statusHandler?.("connected");
           this.connectHandler?.();
-          if (this.connectTimer) clearTimeout(this.connectTimer);
           resolve();
         });
 
@@ -255,14 +238,14 @@ export class MultiplayerPeer {
         this.statusHandler?.("disconnected");
       });
 
-      // Timeout: if data channel not open after 20s, fail
-      this.connectTimer = setTimeout(() => {
+      // Timeout
+      setTimeout(() => {
         if (!this.conn?.open) {
-          log("joinHost", "connection timeout after 20s");
+          log("joinHost", "connection timeout after 30s");
           this.statusHandler?.("error");
-          reject(new Error("Connection timeout — could not reach host"));
+          reject(new Error("Connection timeout"));
         }
-      }, 20000);
+      }, 30000);
     });
   }
 
@@ -299,7 +282,6 @@ export class MultiplayerPeer {
   }
 
   disconnect(): void {
-    if (this.connectTimer) clearTimeout(this.connectTimer);
     if (this.conn) {
       this.conn.close();
       this.conn = null;
