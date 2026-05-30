@@ -6,7 +6,6 @@ import {
   WinTarget,
   RoundResult,
   GAME_WIDTH,
-  GAME_HEIGHT,
   PADDLE_WIDTH,
 } from "@/game/types";
 import {
@@ -218,8 +217,6 @@ export default function Game() {
 
   // Paddle position tracked separately for direct touch control
   const paddleXRef = useRef(GAME_WIDTH / 2 - PADDLE_WIDTH / 2);
-  // For relative touch tracking
-  const lastTouchXRef = useRef<number | null>(null);
 
   const [mode, setMode] = useState<GameMode>("single");
   const [landscape, setLandscape] = useState(false);
@@ -281,11 +278,12 @@ export default function Game() {
     });
 
     peer.onStatus((status: string) => {
-      if (status === "disconnected") {
-        setDisconnected(true);
+      if (status === "connected") {
+        setMpConnected(true);
       }
-      if (status === "error") {
-        // Keep showing QR, let user cancel
+      if (status === "disconnected") {
+        setMpConnected(false);
+        setDisconnected(true);
       }
     });
 
@@ -477,25 +475,30 @@ export default function Game() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // ── Touch on whole screen ──────────────────────────────────────────
+  // ── Dismiss QR when guest connects ─────────────────────────────────
+  const [mpConnected, setMpConnected] = useState(false);
   useEffect(() => {
-    const onTouchStart = (e: TouchEvent) => {
-      lastTouchXRef.current = e.touches[0].clientX;
-    };
-    const onTouchMove = (e: TouchEvent) => {
-      if (lastTouchXRef.current === null) return;
-      const t = e.touches[0];
-      // Relative movement: diff controls paddle velocity
-      const diff = t.clientX - lastTouchXRef.current;
-      const sensitivity = 0.02; // pixels → game units
-      const s = stateRef.current;
-      s.paddle1X = Math.max(0, Math.min(GAME_WIDTH - PADDLE_WIDTH, s.paddle1X + diff * sensitivity));
-      paddleXRef.current = s.paddle1X;
-      lastTouchXRef.current = t.clientX;
-    };
-    const onTouchEnd = () => { lastTouchXRef.current = null; };
+    if (mpConnected && showQR) {
+      setShowQR(false);
+    }
+  }, [mpConnected, showQR]);
 
-    // Attach to window for whole-screen touch
+  // ── Touch on whole screen — absolute position ──────────────────────
+  useEffect(() => {
+    const onTouchMove = (e: TouchEvent) => {
+      const t = e.touches[0];
+      // Absolute positioning: touch X across the whole screen maps to game X
+      const screenW = window.innerWidth;
+      // Map screen X to paddle center game coordinate
+      let gameX = (t.clientX / screenW) * GAME_WIDTH;
+      // Clamp so paddle stays in bounds
+      gameX = Math.max(PADDLE_WIDTH / 2, Math.min(GAME_WIDTH - PADDLE_WIDTH / 2, gameX));
+      paddleXRef.current = gameX - PADDLE_WIDTH / 2;
+      stateRef.current.paddle1X = paddleXRef.current;
+    };
+    const onTouchStart = () => { /* just activate touch mode */ };
+    const onTouchEnd = () => { /* noop */ };
+
     window.addEventListener("touchstart", onTouchStart, { passive: true });
     window.addEventListener("touchmove", onTouchMove, { passive: true });
     window.addEventListener("touchend", onTouchEnd, { passive: true });
