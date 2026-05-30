@@ -42,23 +42,23 @@ export class MultiplayerPeer {
     return this.conn !== null && this.conn.open;
   }
 
-  private makeIceServers(): RTCIceServer[] {
+  private makeIceServers(): any[] {
     return [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-      { urls: "stun:global.stun.twilio.com:3478" },
+      { url: "stun:stun.l.google.com:19302" },
+      { url: "stun:stun1.l.google.com:19302" },
+      { url: "stun:global.stun.twilio.com:3478" },
       {
-        urls: "turn:staticauth.openrelay.metered.ca:80",
+        url: "turn:staticauth.openrelay.metered.ca:80",
         username: "openrelayproject",
         credential: "openrelayprojectsecret",
       },
       {
-        urls: "turn:staticauth.openrelay.metered.ca:80?transport=tcp",
+        url: "turn:staticauth.openrelay.metered.ca:80?transport=tcp",
         username: "openrelayproject",
         credential: "openrelayprojectsecret",
       },
       {
-        urls: "turns:staticauth.openrelay.metered.ca:443",
+        url: "turns:staticauth.openrelay.metered.ca:443",
         username: "openrelayproject",
         credential: "openrelayprojectsecret",
       },
