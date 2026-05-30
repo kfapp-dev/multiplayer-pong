@@ -123,10 +123,11 @@ function RoundOverUI({
   showHistory: boolean;
   onToggleHistory: () => void;
 }) {
-  const iAmPlayer1 = mode !== "multi-guest";
-  const iWon = iAmPlayer1 ? result.winner === 1 : result.winner === 2;
-  const myScore = iAmPlayer1 ? result.score1 : result.score2;
-  const theirScore = iAmPlayer1 ? result.score2 : result.score1;
+  // In guest view, "my" scores are score2 (paddle2), opponent is score1 (paddle1)
+  const iAmHost = mode !== "multi-guest";
+  const iWon = iAmHost ? result.winner === 1 : result.winner === 2;
+  const myScore = iAmHost ? result.score1 : result.score2;
+  const theirScore = iAmHost ? result.score2 : result.score1;
   const canPlayAgain = mode === "single" || mode === "multi-host";
 
   return (
@@ -150,7 +151,7 @@ function RoundOverUI({
           {showHistory && (
             <div className="w-full max-w-xs max-h-24 overflow-y-auto">
               {scoreHistory.map((r, i) => {
-                const won = iAmPlayer1 ? r.winner === 1 : r.winner === 2;
+                const won = iAmHost ? r.winner === 1 : r.winner === 2;
                 return (
                   <div key={i} className="text-gray-400 font-mono text-[11px] py-1 border-b border-gray-800 flex justify-between">
                     <span>R{i + 1}</span>
@@ -193,6 +194,10 @@ export default function Game() {
   const aiRef = useRef(new AI());
   const modeRef = useRef<GameMode>("single");
   const paddleXRef = useRef(GAME_WIDTH / 2 - PADDLE_WIDTH / 2);
+  // Guest: track previous score to detect scoring events for sound
+  const prevScoreRef = useRef({ score1: 0, score2: 0 });
+  // Guest: flip renderer so own paddle appears at bottom
+  const isGuestRef = useRef(false);
 
   const [mode, setMode] = useState<GameMode>("single");
   const [landscape, setLandscape] = useState(false);
@@ -216,6 +221,7 @@ export default function Game() {
     serveBall(state);
     setMode("single");
     modeRef.current = "single";
+    isGuestRef.current = false;
     setShowWinTarget(false);
     setShowQR(false);
     setRoundOver(null);
@@ -233,6 +239,7 @@ export default function Game() {
     const state = createInitialState();
     stateRef.current = state;
     aiRef.current = new AI();
+    isGuestRef.current = false;
 
     const peer = new MultiplayerPeer();
     peerRef.current = peer;
@@ -242,10 +249,11 @@ export default function Game() {
     setRoundOver(null);
     setScoreHistory([]);
 
+    // Guest sends us paddle2 position via "input"
     peer.onMessage((msg: { type: string; [key: string]: unknown }) => {
       if (msg.type === "ready") {
+        // Guest is ready — start the ball
         serveBall(stateRef.current);
-        peer.sendState(stateRef.current);
       }
       if (msg.type === "input" && msg.paddleX !== undefined) {
         stateRef.current.paddle2X = msg.paddleX as number;
@@ -275,6 +283,9 @@ export default function Game() {
   const joinMultiplayer = useCallback(async (joinHostId: string) => {
     const state = createInitialState();
     stateRef.current = state;
+    prevScoreRef.current = { score1: 0, score2: 0 };
+    isGuestRef.current = true;
+
     setMode("multi-guest");
     modeRef.current = "multi-guest";
     setDisconnected(false);
@@ -287,14 +298,25 @@ export default function Game() {
     peer.onMessage((msg: { type: string; [key: string]: unknown }) => {
       const s = stateRef.current;
       switch (msg.type) {
-        case "state":
+        case "state": {
+          // Host sends authoritative game state — just apply it entirely
           if (msg.state) {
-            const myPaddle2 = s.paddle2X;
             Object.assign(s, msg.state);
-            s.paddle2X = myPaddle2;
-            if (s.ballVX !== 0 || s.ballVY !== 0) s.paused = false;
+            // Detect scoring for sound effects (guest side)
+            if (s.score1 > prevScoreRef.current.score1) {
+              playScore(); // opponent scored
+            }
+            if (s.score2 > prevScoreRef.current.score2) {
+              playScore(); // we scored (paddle2 = guest in original coords, but flipped visually)
+            }
+            // Detect paddle hit / wall from ball movement (simple heuristic)
+            if (s.ballVX !== 0 || s.ballVY !== 0) {
+              // Could add sound on ball direction change but that's noisy; skip for now
+            }
+            prevScoreRef.current = { score1: s.score1, score2: s.score2 };
           }
           break;
+        }
         case "win-target":
           if (msg.winTarget) setWinTarget(msg.winTarget as WinTarget);
           break;
@@ -304,12 +326,15 @@ export default function Game() {
             setRoundOver(result);
             setScoreHistory((prev) => [...prev, result]);
             s.paused = true;
+            // Guest is player 2
             if (msg.winner === 2) playWin(); else playLose();
           }
           break;
         case "play-again":
           s.score1 = 0; s.score2 = 0; s.paused = false;
-          resetBall(s); setRoundOver(null);
+          resetBall(s);
+          setRoundOver(null);
+          prevScoreRef.current = { score1: 0, score2: 0 };
           break;
       }
     });
@@ -329,13 +354,13 @@ export default function Game() {
     }
   }, []);
 
-  // ── Play again ─────────────────────────────────────────────────────
+  // ── Play again (host only) ─────────────────────────────────────────
   const handlePlayAgain = useCallback(() => {
     const s = stateRef.current;
     s.score1 = 0; s.score2 = 0; s.paused = false;
     resetBall(s);
     setRoundOver(null);
-    peerRef.current?.send({ type: "play-again" } as import("@/game/types").MultiplayerMessage);
+    peerRef.current?.sendPlayAgain();
   }, []);
 
   // ── Initial serve ──────────────────────────────────────────────────
@@ -347,26 +372,16 @@ export default function Game() {
     if (joinId) joinMultiplayer(joinId);
   }, [joinMultiplayer]);
 
-  // ── Game loop ──────────────────────────────────────────────────────
+  // ── Host game loop ─────────────────────────────────────────────────
+  // Host runs full physics, sends state to guest each frame
   useEffect(() => {
+    if (mode !== "multi-host") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     let running = true;
-
-    const setupCanvas = () => {
-      const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      const size = Math.min(rect.width, rect.height);
-      canvas.width = size * dpr;
-      canvas.height = size * dpr;
-      ctx.setTransform(size * dpr / GAME_WIDTH, 0, 0, size * dpr / GAME_WIDTH, 0, 0);
-      rendererRef.current = new Renderer(ctx, 1);
-    };
-
-    setupCanvas();
 
     const loop = () => {
       if (!running) return;
@@ -381,15 +396,11 @@ export default function Game() {
 
       const keys = keysRef.current;
       let moveP1 = 0;
-      let moveP2 = 0;
-
       if (keys.has("ArrowLeft") || keys.has("a") || keys.has("A")) moveP1 = -1;
       else if (keys.has("ArrowRight") || keys.has("d") || keys.has("D")) moveP1 = 1;
 
-      const m = modeRef.current;
-      if (m === "single") moveP2 = aiRef.current.update(state);
-      else if (m === "multi-host") { moveP2 = 0; peerRef.current?.sendState(state); }
-      else if (m === "multi-guest") { moveP1 = 0; peerRef.current?.sendInput(state.paddle2X); }
+      // Paddle2 comes from guest's input messages (set in onMessage handler)
+      const moveP2 = 0; // guest sets paddle2X directly
 
       const soundEvent = update(state, moveP1, moveP2);
       switch (soundEvent) {
@@ -400,6 +411,10 @@ export default function Game() {
 
       paddleXRef.current = state.paddle1X;
 
+      // Send authoritative state to guest every frame
+      peerRef.current?.sendState(state);
+
+      // Check win
       if (winTarget && !roundOver) {
         const gameOver = state.score1 >= winTarget || state.score2 >= winTarget;
         if (gameOver) {
@@ -408,13 +423,8 @@ export default function Game() {
           setRoundOver(result);
           setScoreHistory((prev) => [...prev, result]);
           state.paused = true;
-          if (m === "single") playLose();
-          else if (m === "multi-host") {
-            peerRef.current?.sendRoundOver(winner, state.score1, state.score2);
-            winner === 1 ? playWin() : playLose();
-          } else {
-            winner === 2 ? playWin() : playLose();
-          }
+          peerRef.current?.sendRoundOver(winner, state.score1, state.score2);
+          winner === 1 ? playWin() : playLose();
         }
       }
 
@@ -424,7 +434,113 @@ export default function Game() {
 
     rafRef.current = requestAnimationFrame(loop);
     return () => { running = false; cancelAnimationFrame(rafRef.current); };
-  }, [winTarget, roundOver]);
+  }, [mode, winTarget, roundOver]);
+
+  // ── Guest game loop ────────────────────────────────────────────────
+  // Guest does NOT run physics — just renders state from host
+  useEffect(() => {
+    if (mode !== "multi-guest") return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let running = true;
+
+    const loop = () => {
+      if (!running) return;
+      const state = stateRef.current;
+      // Render the host's authoritative state (flipped so our paddle is at bottom)
+      rendererRef.current?.draw(state);
+      rafRef.current = requestAnimationFrame(loop);
+    };
+
+    rafRef.current = requestAnimationFrame(loop);
+    return () => { running = false; cancelAnimationFrame(rafRef.current); };
+  }, [mode]);
+
+  // ── Single player game loop ────────────────────────────────────────
+  useEffect(() => {
+    if (mode !== "single") return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let running = true;
+
+    const loop = () => {
+      if (!running) return;
+      const state = stateRef.current;
+      state.paddle1X = paddleXRef.current;
+
+      if (state.paused) {
+        rendererRef.current?.draw(state);
+        rafRef.current = requestAnimationFrame(loop);
+        return;
+      }
+
+      const keys = keysRef.current;
+      let moveP1 = 0;
+      if (keys.has("ArrowLeft") || keys.has("a") || keys.has("A")) moveP1 = -1;
+      else if (keys.has("ArrowRight") || keys.has("d") || keys.has("D")) moveP1 = 1;
+
+      const moveP2 = aiRef.current.update(state);
+
+      const soundEvent = update(state, moveP1, moveP2);
+      switch (soundEvent) {
+        case "paddle-hit": playPaddleHit(); break;
+        case "wall": playWallHit(); break;
+        case "score1": case "score2": playScore(); break;
+      }
+
+      paddleXRef.current = state.paddle1X;
+
+      // Single player win check
+      if (winTarget) {
+        const gameOver = state.score1 >= winTarget || state.score2 >= winTarget;
+        if (gameOver) {
+          state.paused = true;
+          playLose();
+        }
+      }
+
+      rendererRef.current?.draw(state);
+      rafRef.current = requestAnimationFrame(loop);
+    };
+
+    rafRef.current = requestAnimationFrame(loop);
+    return () => { running = false; cancelAnimationFrame(rafRef.current); };
+  }, [mode, winTarget]);
+
+  // ── Canvas setup (resize + create renderer) ────────────────────────
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const setupCanvas = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const size = Math.min(rect.width, rect.height);
+      canvas.width = size * dpr;
+      canvas.height = size * dpr;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.setTransform(size * dpr / GAME_WIDTH, 0, 0, size * dpr / GAME_WIDTH, 0, 0);
+        rendererRef.current = new Renderer(ctx, 1, isGuestRef.current);
+      }
+    };
+
+    setupCanvas();
+
+    const onResize = () => {
+      setLandscape(isLandscape());
+      setupCanvas();
+    };
+
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [mode]);
 
   // ── Keyboard ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -435,30 +551,7 @@ export default function Game() {
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
   }, []);
 
-  // ── Resize ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    const onResize = () => {
-      setLandscape(isLandscape());
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const rect = canvas.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-        const size = Math.min(rect.width, rect.height);
-        canvas.width = size * dpr;
-        canvas.height = size * dpr;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.setTransform(size * dpr / GAME_WIDTH, 0, 0, size * dpr / GAME_WIDTH, 0, 0);
-          rendererRef.current = new Renderer(ctx, 1);
-        }
-      }
-    };
-    onResize();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  // ── Touch on whole screen — absolute position ──────────────────────
+  // ── Touch (whole screen, absolute position) ────────────────────────
   useEffect(() => {
     const onTouchMove = (e: TouchEvent) => {
       const t = e.touches[0];
@@ -467,6 +560,12 @@ export default function Game() {
       gameX = Math.max(PADDLE_WIDTH / 2, Math.min(GAME_WIDTH - PADDLE_WIDTH / 2, gameX));
       paddleXRef.current = gameX - PADDLE_WIDTH / 2;
       stateRef.current.paddle1X = paddleXRef.current;
+
+      // Guest: send paddle position to host (guest controls paddle2)
+      if (modeRef.current === "multi-guest") {
+        stateRef.current.paddle2X = paddleXRef.current;
+        peerRef.current?.sendInput(stateRef.current.paddle2X);
+      }
     };
     window.addEventListener("touchmove", onTouchMove, { passive: true });
     return () => window.removeEventListener("touchmove", onTouchMove);
