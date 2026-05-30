@@ -4,6 +4,10 @@ type MessageHandler = (msg: MultiplayerMessage) => void;
 type StatusHandler = (status: string) => void;
 type ConnectHandler = () => void;
 
+function log(tag: string, ...args: unknown[]) {
+  console.log(`[pong:${tag}]`, ...args);
+}
+
 export class MultiplayerPeer {
   private peer: any = null;
   private conn: any = null;
@@ -12,6 +16,7 @@ export class MultiplayerPeer {
   private statusHandler: StatusHandler | null = null;
   private connectHandler: ConnectHandler | null = null;
   private peerId: string = "";
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
 
   onMessage(handler: MessageHandler): void {
     this.messageHandler = handler;
@@ -37,61 +42,91 @@ export class MultiplayerPeer {
     return this.conn !== null && this.conn.open;
   }
 
+  private makeIceServers(): RTCIceServer[] {
+    return [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:global.stun.twilio.com:3478" },
+      {
+        urls: "turn:staticauth.openrelay.metered.ca:80",
+        username: "openrelayproject",
+        credential: "openrelayprojectsecret",
+      },
+      {
+        urls: "turn:staticauth.openrelay.metered.ca:80?transport=tcp",
+        username: "openrelayproject",
+        credential: "openrelayprojectsecret",
+      },
+      {
+        urls: "turns:staticauth.openrelay.metered.ca:443",
+        username: "openrelayproject",
+        credential: "openrelayprojectsecret",
+      },
+    ];
+  }
+
   async createHost(): Promise<string> {
     const Peer = (await import("peerjs")).default;
     this.peerId = "pong-" + Math.random().toString(36).substring(2, 10);
     this.isHostPeer = true;
+    log("createHost", "peerId=", this.peerId);
 
     return new Promise((resolve, reject) => {
-      this.peer = new Peer(this.peerId, {
-      debug: 0,
-      config: {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:global.stun.twilio.com:3478" },
-          {
-            urls: [
-              "turn:staticauth.openrelay.metered.ca:80?transport=udp",
-              "turn:staticauth.openrelay.metered.ca:80?transport=tcp",
-              "turns:staticauth.openrelay.metered.ca:443?transport=tcp",
-            ],
-            username: "openrelayproject",
-            credential: "openrelayprojectsecret",
-          },
-        ],
-      },
-    });
+      try {
+        this.peer = new Peer(this.peerId, {
+          debug: process.env.NODE_ENV === "development" ? 2 : 0,
+          config: { iceServers: this.makeIceServers() },
+        });
+      } catch (err) {
+        log("createHost", "Peer constructor error:", err);
+        reject(err);
+        return;
+      }
 
-      this.peer.on("open", () => {
-        this.statusHandler?.("connected");
-        resolve(this.peerId);
+      this.peer.on("open", (id: string) => {
+        log("createHost", "peer signaling open, id=", id);
+        resolve(id);
       });
 
       this.peer.on("connection", (conn: any) => {
+        log("createHost", "incoming connection from", conn.peer);
         this.conn = conn;
+
         conn.on("open", () => {
+          log("createHost", "data channel open with", conn.peer);
           this.statusHandler?.("connected");
           this.connectHandler?.();
         });
+
         conn.on("data", (data: unknown) => {
           this.messageHandler?.(data as MultiplayerMessage);
         });
+
         conn.on("close", () => {
+          log("createHost", "data channel closed");
           this.statusHandler?.("disconnected");
           this.conn = null;
         });
-        conn.on("error", () => {
+
+        conn.on("error", (err: any) => {
+          log("createHost", "data channel error:", err);
           this.statusHandler?.("error");
         });
       });
 
-      this.peer.on("error", (err: Error) => {
+      this.peer.on("error", (err: any) => {
+        log("createHost", "peer error:", err.type, err.message || err);
         this.statusHandler?.("error");
         reject(err);
       });
 
       this.peer.on("disconnected", () => {
+        log("createHost", "peer disconnected from signaling");
         this.statusHandler?.("disconnected");
+      });
+
+      this.peer.on("close", () => {
+        log("createHost", "peer closed");
       });
     });
   }
@@ -100,35 +135,31 @@ export class MultiplayerPeer {
     const Peer = (await import("peerjs")).default;
     this.isHostPeer = false;
     this.peerId = "pong-" + Math.random().toString(36).substring(2, 10);
+    log("joinHost", "peerId=", this.peerId, "hostId=", hostId);
 
     return new Promise((resolve, reject) => {
-      this.statusHandler?.("connecting");
-      this.peer = new Peer(this.peerId, {
-      debug: 0,
-      config: {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:global.stun.twilio.com:3478" },
-          {
-            urls: [
-              "turn:staticauth.openrelay.metered.ca:80?transport=udp",
-              "turn:staticauth.openrelay.metered.ca:80?transport=tcp",
-              "turns:staticauth.openrelay.metered.ca:443?transport=tcp",
-            ],
-            username: "openrelayproject",
-            credential: "openrelayprojectsecret",
-          },
-        ],
-      },
-    });
+      try {
+        this.peer = new Peer(this.peerId, {
+          debug: process.env.NODE_ENV === "development" ? 2 : 0,
+          config: { iceServers: this.makeIceServers() },
+        });
+      } catch (err) {
+        log("joinHost", "Peer constructor error:", err);
+        reject(err);
+        return;
+      }
 
-      this.peer.on("open", () => {
+      this.peer.on("open", (id: string) => {
+        log("joinHost", "peer signaling open, id=", id, "connecting to", hostId);
+
         const conn = this.peer!.connect(hostId, { reliable: true });
         this.conn = conn;
 
         conn.on("open", () => {
+          log("joinHost", "data channel open to host");
           this.statusHandler?.("connected");
           this.connectHandler?.();
+          if (this.connectTimer) clearTimeout(this.connectTimer);
           resolve();
         });
 
@@ -137,26 +168,37 @@ export class MultiplayerPeer {
         });
 
         conn.on("close", () => {
+          log("joinHost", "data channel closed");
           this.statusHandler?.("disconnected");
           this.conn = null;
         });
 
-        conn.on("error", (err: Error) => {
+        conn.on("error", (err: any) => {
+          log("joinHost", "data channel error:", err);
           this.statusHandler?.("error");
           reject(err);
         });
       });
 
-      this.peer.on("error", (err: Error) => {
+      this.peer.on("error", (err: any) => {
+        log("joinHost", "peer error:", err.type, err.message || err);
         this.statusHandler?.("error");
         reject(err);
       });
 
-      setTimeout(() => {
+      this.peer.on("disconnected", () => {
+        log("joinHost", "peer disconnected from signaling");
+        this.statusHandler?.("disconnected");
+      });
+
+      // Timeout: if data channel not open after 20s, fail
+      this.connectTimer = setTimeout(() => {
         if (!this.conn?.open) {
-          reject(new Error("Connection timeout"));
+          log("joinHost", "connection timeout after 20s");
+          this.statusHandler?.("error");
+          reject(new Error("Connection timeout — could not reach host"));
         }
-      }, 15000);
+      }, 20000);
     });
   }
 
@@ -193,6 +235,7 @@ export class MultiplayerPeer {
   }
 
   disconnect(): void {
+    if (this.connectTimer) clearTimeout(this.connectTimer);
     if (this.conn) {
       this.conn.close();
       this.conn = null;
