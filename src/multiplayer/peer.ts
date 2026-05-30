@@ -48,7 +48,6 @@ export class MultiplayerPeer {
     // Must override util.defaultConfig before creating the Peer object.
     // Uses 'urls' (plural) as required by PeerJS internal config format.
     const PeerUtil = (Peer as any).util;
-    log("createHost", "Peer.util exists:", !!PeerUtil, "defaultConfig:", JSON.stringify(PeerUtil?.defaultConfig));
     if (PeerUtil?.defaultConfig) {
       PeerUtil.defaultConfig = {
         iceServers: [
@@ -65,7 +64,6 @@ export class MultiplayerPeer {
         ],
         sdpSemantics: "unified-plan",
       };
-      log("createHost", "defaultConfig after override:", JSON.stringify(PeerUtil.defaultConfig));
     }
     this.peerId = "pong-" + Math.random().toString(36).substring(2, 10);
     this.isHostPeer = true;
@@ -90,6 +88,29 @@ export class MultiplayerPeer {
       this.peer.on("connection", (conn: any) => {
         log("createHost", "incoming connection from", conn.peer);
         this.conn = conn;
+
+        // Try to access the underlying RTCPeerConnection and set ICE servers
+        const pc = conn.peerConnection || conn._pc || conn.provider?.peerConnection;
+        if (pc) {
+          log("createHost", "found peerConnection, setting ICE config");
+          try {
+            pc.setConfiguration({
+              iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: ["turn:178.105.26.234:3478", "turn:178.105.26.234:3478?transport=tcp"], username: "game", credential: "pongturn2026" },
+              ],
+            });
+            // Trigger ICE restart to use new config
+            if (typeof pc.restartIce === "function") {
+              pc.restartIce();
+              log("createHost", "ICE restart triggered");
+            }
+          } catch (e) {
+            log("createHost", "peerConnection config error:", e);
+          }
+        } else {
+          log("createHost", "no peerConnection found on conn object");
+        }
 
         conn.on("open", () => {
           log("createHost", "data channel open with", conn.peer);
@@ -136,7 +157,6 @@ export class MultiplayerPeer {
     // Must override util.defaultConfig before creating the Peer object.
     // Uses 'urls' (plural) as required by PeerJS internal config format.
     const PeerUtil = (Peer as any).util;
-    log("joinHost", "Peer.util exists:", !!PeerUtil, "defaultConfig:", JSON.stringify(PeerUtil?.defaultConfig));
     if (PeerUtil?.defaultConfig) {
       PeerUtil.defaultConfig = {
         iceServers: [
@@ -153,7 +173,6 @@ export class MultiplayerPeer {
         ],
         sdpSemantics: "unified-plan",
       };
-      log("joinHost", "defaultConfig after override:", JSON.stringify(PeerUtil.defaultConfig));
     }
     this.isHostPeer = false;
     this.peerId = "pong-" + Math.random().toString(36).substring(2, 10);
@@ -177,6 +196,28 @@ export class MultiplayerPeer {
           reliable: true,
         });
         this.conn = conn;
+
+        // Try to access the underlying RTCPeerConnection and set ICE servers
+        const pc = conn.peerConnection || conn._pc || conn.provider?.peerConnection;
+        if (pc) {
+          log("joinHost", "found peerConnection, setting ICE config");
+          try {
+            pc.setConfiguration({
+              iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: ["turn:178.105.26.234:3478", "turn:178.105.26.234:3478?transport=tcp"], username: "game", credential: "pongturn2026" },
+              ],
+            });
+            if (typeof pc.restartIce === "function") {
+              pc.restartIce();
+              log("joinHost", "ICE restart triggered");
+            }
+          } catch (e) {
+            log("joinHost", "peerConnection config error:", e);
+          }
+        } else {
+          log("joinHost", "no peerConnection found on conn object");
+        }
 
         conn.on("open", () => {
           log("joinHost", "data channel open to host");
