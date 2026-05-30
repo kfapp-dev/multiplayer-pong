@@ -43,7 +43,24 @@ export class MultiplayerPeer {
     this.isHostPeer = true;
 
     return new Promise((resolve, reject) => {
-      this.peer = new Peer(this.peerId, { debug: 0 });
+      this.peer = new Peer(this.peerId, {
+      debug: 0,
+      config: {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:global.stun.twilio.com:3478" },
+          {
+            urls: [
+              "turn:staticauth.openrelay.metered.ca:80?transport=udp",
+              "turn:staticauth.openrelay.metered.ca:80?transport=tcp",
+              "turns:staticauth.openrelay.metered.ca:443?transport=tcp",
+            ],
+            username: "openrelayproject",
+            credential: "openrelayprojectsecret",
+          },
+        ],
+      },
+    });
 
       this.peer.on("open", () => {
         this.statusHandler?.("connected");
@@ -86,7 +103,24 @@ export class MultiplayerPeer {
 
     return new Promise((resolve, reject) => {
       this.statusHandler?.("connecting");
-      this.peer = new Peer(this.peerId, { debug: 0 });
+      this.peer = new Peer(this.peerId, {
+      debug: 0,
+      config: {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:global.stun.twilio.com:3478" },
+          {
+            urls: [
+              "turn:staticauth.openrelay.metered.ca:80?transport=udp",
+              "turn:staticauth.openrelay.metered.ca:80?transport=tcp",
+              "turns:staticauth.openrelay.metered.ca:443?transport=tcp",
+            ],
+            username: "openrelayproject",
+            credential: "openrelayprojectsecret",
+          },
+        ],
+      },
+    });
 
       this.peer.on("open", () => {
         const conn = this.peer!.connect(hostId, { reliable: true });
