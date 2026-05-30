@@ -25,25 +25,6 @@ import {
 } from "@/game/sounds";
 import { MultiplayerPeer } from "@/multiplayer/peer";
 
-/*
- * Layout: the canvas is always SQUARE (GAME_WIDTH × GAME_WIDTH).
- * GAME_HEIGHT (800) is the internal coordinate space height for game logic,
- * but the visible canvas is square. The rendering code draws the full
- * game field into a square canvas, with the play area taking the full square.
- * This means we clamp the canvas to min(screenW, screenH) so everything fits.
- */
-
-function getCanvasSize(): { size: number; scale: number } {
-  if (typeof window === "undefined") return { size: 360, scale: 0.6 };
-  // Reserve space for controls on mobile: ~120px for button bar
-  const reserved = 120;
-  const availableW = window.innerWidth;
-  const availableH = window.innerHeight - reserved;
-  const maxW = 600;
-  const size = Math.min(availableW, availableH, maxW);
-  return { size, scale: size / GAME_WIDTH };
-}
-
 function isLandscape(): boolean {
   return typeof window !== "undefined" && window.innerWidth > window.innerHeight && window.innerHeight < 400;
 }
@@ -109,18 +90,15 @@ function MultiplayerOverlay({
   return (
     <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center px-6 gap-5 overflow-y-auto py-8">
       <p className="text-white font-mono text-lg text-center shrink-0">Share with your opponent</p>
-
       <div className="bg-white rounded-2xl p-3 shrink-0">
         <img src={qrUrl} alt="Scan to join" width={200} height={200} className="block" />
       </div>
-
       <div className="w-full max-w-sm bg-gray-900 border border-gray-600 rounded-xl p-3 flex items-center gap-3">
         <p className="text-gray-300 font-mono text-xs break-all flex-1 select-all leading-relaxed">{url}</p>
         <button onClick={handleCopy} className="bg-white text-black font-mono text-xs font-bold px-4 py-2 rounded-lg shrink-0 active:bg-gray-300">
           {copied ? "Copied!" : "Copy"}
         </button>
       </div>
-
       <button onClick={onCancel} className="text-gray-400 font-mono text-base mt-2 px-8 py-3 shrink-0">
         Cancel
       </button>
@@ -154,7 +132,7 @@ function RoundOverUI({
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-gray-900 border-t border-gray-700 p-4 flex flex-col items-center gap-3 z-40">
       <p className={`font-mono text-2xl font-bold ${iWon ? "text-green-400" : "text-red-400"}`}>
-        {iWon ? "You Win" : "You Lose"} {myScore}–{theirScore}
+        {iWon ? "You Win" : "You Lose"} {myScore}&ndash;{theirScore}
       </p>
       {canPlayAgain && (
         <button onClick={onPlayAgain} className="w-full max-w-xs bg-white text-black font-mono py-3 rounded-xl font-bold active:bg-gray-300">
@@ -162,7 +140,7 @@ function RoundOverUI({
         </button>
       )}
       {!canPlayAgain && mode === "multi-guest" && (
-        <p className="text-gray-500 font-mono text-sm">Waiting for host to start next round…</p>
+        <p className="text-gray-500 font-mono text-sm">Waiting for host to start next round&hellip;</p>
       )}
       {scoreHistory.length > 1 && (
         <>
@@ -176,7 +154,7 @@ function RoundOverUI({
                 return (
                   <div key={i} className="text-gray-400 font-mono text-[11px] py-1 border-b border-gray-800 flex justify-between">
                     <span>R{i + 1}</span>
-                    <span>{r.score1}–{r.score2}</span>
+                    <span>{r.score1}&ndash;{r.score2}</span>
                     <span className={won ? "text-green-400" : "text-red-400"}>{won ? "W" : "L"}</span>
                   </div>
                 );
@@ -214,22 +192,25 @@ export default function Game() {
   const hostIdRef = useRef("");
   const aiRef = useRef(new AI());
   const modeRef = useRef<GameMode>("single");
-
-  // Paddle position tracked separately for direct touch control
   const paddleXRef = useRef(GAME_WIDTH / 2 - PADDLE_WIDTH / 2);
 
   const [mode, setMode] = useState<GameMode>("single");
   const [landscape, setLandscape] = useState(false);
   const [showWinTarget, setShowWinTarget] = useState(false);
   const [showQR, setShowQR] = useState(false);
+  const [mpConnected, setMpConnected] = useState(false);
   const [winTarget, setWinTarget] = useState<WinTarget | null>(null);
   const [roundOver, setRoundOver] = useState<RoundResult | null>(null);
   const [scoreHistory, setScoreHistory] = useState<RoundResult[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [disconnected, setDisconnected] = useState(false);
-  const [canvasSize, setCanvasSize] = useState(getCanvasSize);
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
+
+  // Dismiss QR when guest connects
+  useEffect(() => {
+    if (mpConnected && showQR) setShowQR(false);
+  }, [mpConnected, showQR]);
 
   // ── Init single player ──────────────────────────────────────────────
   const initSinglePlayer = useCallback(() => {
@@ -243,6 +224,7 @@ export default function Game() {
     modeRef.current = "single";
     setShowWinTarget(false);
     setShowQR(false);
+    setMpConnected(false);
     setRoundOver(null);
     setDisconnected(false);
     setWinTarget(null);
@@ -278,24 +260,17 @@ export default function Game() {
     });
 
     peer.onStatus((status: string) => {
-      if (status === "connected") {
-        setMpConnected(true);
-      }
-      if (status === "disconnected") {
-        setMpConnected(false);
-        setDisconnected(true);
-      }
+      if (status === "connected") setMpConnected(true);
+      if (status === "disconnected") { setMpConnected(false); setDisconnected(true); }
     });
 
     try {
       const id = await peer.createHost();
       hostIdRef.current = id;
       peer.sendWinTarget(target);
-      // Now show the QR overlay
       setShowQR(true);
-    } catch (err: unknown) {
+    } catch {
       setShowQR(false);
-      // Fall back to single player on error
       setShowWinTarget(true);
     }
   }, []);
@@ -344,7 +319,7 @@ export default function Game() {
     });
 
     peer.onStatus((status: string) => {
-      if (status === "connected") { peer.sendReady(); }
+      if (status === "connected") { setMpConnected(true); peer.sendReady(); }
       if (status === "disconnected") { setDisconnected(true); }
     });
 
@@ -365,9 +340,7 @@ export default function Game() {
   }, []);
 
   // ── Initial serve ──────────────────────────────────────────────────
-  useEffect(() => {
-    serveBall(stateRef.current);
-  }, []);
+  useEffect(() => { serveBall(stateRef.current); }, []);
 
   // ── Join via URL ───────────────────────────────────────────────────
   useEffect(() => {
@@ -382,18 +355,24 @@ export default function Game() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const { size, scale } = canvasSize;
-    canvas.width = size;
-    canvas.height = size;
-    rendererRef.current = new Renderer(ctx, scale);
-
     let running = true;
+
+    const setupCanvas = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const size = Math.min(rect.width, rect.height);
+      canvas.width = size * dpr;
+      canvas.height = size * dpr;
+      ctx.setTransform(size * dpr / GAME_WIDTH, 0, 0, size * dpr / GAME_WIDTH, 0, 0);
+      rendererRef.current = new Renderer(ctx, 1);
+    };
+
+    setupCanvas();
 
     const loop = () => {
       if (!running) return;
-
       const state = stateRef.current;
-      state.paddle1X = paddleXRef.current; // Always sync from touch ref
+      state.paddle1X = paddleXRef.current;
 
       if (state.paused) {
         rendererRef.current?.draw(state);
@@ -409,15 +388,9 @@ export default function Game() {
       else if (keys.has("ArrowRight") || keys.has("d") || keys.has("D")) moveP1 = 1;
 
       const m = modeRef.current;
-      if (m === "single") {
-        moveP2 = aiRef.current.update(state);
-      } else if (m === "multi-host") {
-        moveP2 = 0;
-        peerRef.current?.sendState(state);
-      } else if (m === "multi-guest") {
-        moveP1 = 0;
-        peerRef.current?.sendInput(state.paddle2X);
-      }
+      if (m === "single") moveP2 = aiRef.current.update(state);
+      else if (m === "multi-host") { moveP2 = 0; peerRef.current?.sendState(state); }
+      else if (m === "multi-guest") { moveP1 = 0; peerRef.current?.sendInput(state.paddle2X); }
 
       const soundEvent = update(state, moveP1, moveP2);
       switch (soundEvent) {
@@ -426,7 +399,6 @@ export default function Game() {
         case "score1": case "score2": playScore(); break;
       }
 
-      // Sync paddle back from engine (in case engine clamped it)
       paddleXRef.current = state.paddle1X;
 
       if (winTarget && !roundOver) {
@@ -437,7 +409,7 @@ export default function Game() {
           setRoundOver(result);
           setScoreHistory((prev) => [...prev, result]);
           state.paused = true;
-          if (m === "single") { playLose(); }
+          if (m === "single") playLose();
           else if (m === "multi-host") {
             peerRef.current?.sendRoundOver(winner, state.score1, state.score2);
             winner === 1 ? playWin() : playLose();
@@ -453,7 +425,7 @@ export default function Game() {
 
     rafRef.current = requestAnimationFrame(loop);
     return () => { running = false; cancelAnimationFrame(rafRef.current); };
-  }, [canvasSize, winTarget, roundOver]);
+  }, [winTarget, roundOver]);
 
   // ── Keyboard ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -467,46 +439,38 @@ export default function Game() {
   // ── Resize ─────────────────────────────────────────────────────────
   useEffect(() => {
     const onResize = () => {
-      setCanvasSize(getCanvasSize());
       setLandscape(isLandscape());
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const size = Math.min(rect.width, rect.height);
+        canvas.width = size * dpr;
+        canvas.height = size * dpr;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.setTransform(size * dpr / GAME_WIDTH, 0, 0, size * dpr / GAME_WIDTH, 0, 0);
+          rendererRef.current = new Renderer(ctx, 1);
+        }
+      }
     };
     onResize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // ── Dismiss QR when guest connects ─────────────────────────────────
-  const [mpConnected, setMpConnected] = useState(false);
-  useEffect(() => {
-    if (mpConnected && showQR) {
-      setShowQR(false);
-    }
-  }, [mpConnected, showQR]);
-
   // ── Touch on whole screen — absolute position ──────────────────────
   useEffect(() => {
     const onTouchMove = (e: TouchEvent) => {
       const t = e.touches[0];
-      // Absolute positioning: touch X across the whole screen maps to game X
       const screenW = window.innerWidth;
-      // Map screen X to paddle center game coordinate
       let gameX = (t.clientX / screenW) * GAME_WIDTH;
-      // Clamp so paddle stays in bounds
       gameX = Math.max(PADDLE_WIDTH / 2, Math.min(GAME_WIDTH - PADDLE_WIDTH / 2, gameX));
       paddleXRef.current = gameX - PADDLE_WIDTH / 2;
       stateRef.current.paddle1X = paddleXRef.current;
     };
-    const onTouchStart = () => { /* just activate touch mode */ };
-    const onTouchEnd = () => { /* noop */ };
-
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
     window.addEventListener("touchmove", onTouchMove, { passive: true });
-    window.addEventListener("touchend", onTouchEnd, { passive: true });
-    return () => {
-      window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchmove", onTouchMove);
-      window.removeEventListener("touchend", onTouchEnd);
-    };
+    return () => window.removeEventListener("touchmove", onTouchMove);
   }, []);
 
   // ── Render ─────────────────────────────────────────────────────────
@@ -533,9 +497,7 @@ export default function Game() {
           onCancel={() => { setShowQR(false); initSinglePlayer(); }}
         />
       )}
-      {disconnected && !showQR && (
-        <DisconnectedOverlay onBack={initSinglePlayer} />
-      )}
+      {disconnected && !showQR && <DisconnectedOverlay onBack={initSinglePlayer} />}
       {roundOver && !showQR && (
         <RoundOverUI
           result={roundOver}
@@ -547,26 +509,41 @@ export default function Game() {
         />
       )}
 
-      {/* Controls ABOVE canvas */}
+      {/* Button bar at top */}
       {mode === "single" && !showWinTarget && !showQR && (
-        <div className="w-full flex justify-center py-3 shrink-0">
+        <div className="w-full flex justify-center py-2 shrink-0">
           <button
             onClick={() => setShowWinTarget(true)}
-            className="bg-white text-black font-mono text-lg py-3 px-8 rounded-xl font-bold active:bg-gray-300"
+            className="bg-white text-black font-mono text-base py-2 px-6 rounded-xl font-bold active:bg-gray-300"
           >
             Start Multiplayer Session
           </button>
         </div>
       )}
 
-      {/* Square game canvas — fills remaining space */}
-      <div className="flex-1 flex items-center justify-center overflow-hidden">
+      {/* Square game canvas — fills all remaining space */}
+      <div className="flex-1 min-h-0">
         <canvas
           ref={canvasRef}
-          className="block"
-          style={{ touchAction: "none" }}
+          className="block w-full h-full"
+          style={{ touchAction: "none", objectFit: "contain" }}
         />
       </div>
+
+      {/* Reset score — single player only */}
+      {mode === "single" && !showWinTarget && !showQR && (
+        <div className="w-full flex justify-center py-2 shrink-0">
+          <button
+            onClick={() => {
+              stateRef.current.score1 = 0;
+              stateRef.current.score2 = 0;
+            }}
+            className="text-gray-500 font-mono text-sm py-2 px-6 active:text-gray-300"
+          >
+            Reset Score
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -8,30 +8,23 @@ import {
 
 export class Renderer {
   private ctx: CanvasRenderingContext2D;
-  private scale: number;
 
-  constructor(ctx: CanvasRenderingContext2D, scale: number) {
+  constructor(ctx: CanvasRenderingContext2D, _scale: number) {
     this.ctx = ctx;
-    this.scale = scale;
-  }
-
-  clear(): void {
-    this.ctx.fillStyle = "#000";
-    this.ctx.fillRect(0, 0, GAME_WIDTH * this.scale, GAME_WIDTH * this.scale);
   }
 
   draw(state: GameState): void {
-    const s = this.scale;
-    const W = GAME_WIDTH * s;
+    const s = 1; // scaling handled by ctx.setTransform in game loop
+    const W = GAME_WIDTH;
 
     // Background
     this.ctx.fillStyle = "#000";
     this.ctx.fillRect(0, 0, W, W);
 
     // Center line
-    this.ctx.setLineDash([10 * s, 10 * s]);
+    this.ctx.setLineDash([10, 10]);
     this.ctx.strokeStyle = "#444";
-    this.ctx.lineWidth = 2 * s;
+    this.ctx.lineWidth = 2;
     this.ctx.beginPath();
     this.ctx.moveTo(0, W / 2);
     this.ctx.lineTo(W, W / 2);
@@ -40,43 +33,40 @@ export class Renderer {
 
     // Center circle
     this.ctx.strokeStyle = "#333";
-    this.ctx.lineWidth = 2 * s;
+    this.ctx.lineWidth = 2;
     this.ctx.beginPath();
-    this.ctx.arc(W / 2, W / 2, 50 * s, 0, Math.PI * 2);
+    this.ctx.arc(W / 2, W / 2, 50, 0, Math.PI * 2);
     this.ctx.stroke();
 
     // Scores
     this.ctx.fillStyle = "#888";
-    this.ctx.font = `bold ${72 * s}px monospace`;
+    this.ctx.font = "bold 72px monospace";
     this.ctx.textAlign = "center";
-    this.ctx.fillText(String(state.score2), W / 2, W / 2 - 40 * s);
-    this.ctx.fillText(String(state.score1), W / 2, W / 2 + 90 * s);
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillText(String(state.score2), W / 2, W / 2 - 60);
+    this.ctx.fillText(String(state.score1), W / 2, W / 2 + 60);
 
     // Paddle 2 (top — AI / opponent)
     this.ctx.fillStyle = "#fff";
-    this.ctx.fillRect(state.paddle2X * s, 10 * s, PADDLE_WIDTH * s, PADDLE_HEIGHT * s);
+    this.ctx.fillRect(state.paddle2X, 10, PADDLE_WIDTH, PADDLE_HEIGHT);
 
     // Paddle 1 (bottom — player)
     this.ctx.fillStyle = "#fff";
-    this.ctx.fillRect(
-      state.paddle1X * s,
-      (GAME_WIDTH - PADDLE_HEIGHT - 10) * s,
-      PADDLE_WIDTH * s,
-      PADDLE_HEIGHT * s
-    );
+    this.ctx.fillRect(state.paddle1X, GAME_WIDTH - PADDLE_HEIGHT - 10, PADDLE_WIDTH, PADDLE_HEIGHT);
 
     // Ball
     this.ctx.fillStyle = "#fff";
     this.ctx.beginPath();
-    this.ctx.arc(state.ballX * s, state.ballY * s, BALL_RADIUS * s, 0, Math.PI * 2);
+    this.ctx.arc(state.ballX, state.ballY, BALL_RADIUS, 0, Math.PI * 2);
     this.ctx.fill();
 
     // Paused indicator
     if (state.paused) {
       this.ctx.fillStyle = "#666";
-      this.ctx.font = `bold ${40 * s}px monospace`;
+      this.ctx.font = "bold 40px monospace";
       this.ctx.textAlign = "center";
-      this.ctx.fillText("?", W / 2, W / 2 + 15 * s);
+      this.ctx.textBaseline = "middle";
+      this.ctx.fillText("?", W / 2, W / 2);
     }
   }
 }
