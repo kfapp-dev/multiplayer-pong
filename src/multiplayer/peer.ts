@@ -44,6 +44,26 @@ export class MultiplayerPeer {
 
   async createHost(): Promise<string> {
     const Peer = (await import("peerjs")).default;
+    // Workaround: PeerJS ignores config.iceServers in the Peer constructor.
+    // Must override util.defaultConfig before creating the Peer object.
+    // Uses 'urls' (plural) as required by PeerJS internal config format.
+    if ((Peer as any).util?.defaultConfig) {
+      (Peer as any).util.defaultConfig = {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          {
+            urls: [
+              "turn:178.105.26.234:3478",
+              "turn:178.105.26.234:3478?transport=tcp",
+            ],
+            username: "game",
+            credential: "pongturn2026",
+          },
+        ],
+        sdpSemantics: "unified-plan",
+      };
+    }
     this.peerId = "pong-" + Math.random().toString(36).substring(2, 10);
     this.isHostPeer = true;
     log("createHost", "peerId=", this.peerId);
@@ -52,22 +72,6 @@ export class MultiplayerPeer {
       try {
         this.peer = new Peer(this.peerId, {
           debug: process.env.NODE_ENV === "development" ? 2 : 0,
-          config: {
-            iceServers: [
-              { url: "stun:stun.l.google.com:19302" },
-              { url: "stun:stun1.l.google.com:19302" },
-              {
-                url: "turn:178.105.26.234:3478",
-                username: "game",
-                credential: "pongturn2026",
-              },
-              {
-                url: "turn:178.105.26.234:3478?transport=tcp",
-                username: "game",
-                credential: "pongturn2026",
-              },
-            ],
-          },
         });
       } catch (err) {
         log("createHost", "Peer constructor error:", err);
@@ -125,6 +129,26 @@ export class MultiplayerPeer {
 
   async joinHost(hostId: string): Promise<void> {
     const Peer = (await import("peerjs")).default;
+    // Workaround: PeerJS ignores config.iceServers in the Peer constructor.
+    // Must override util.defaultConfig before creating the Peer object.
+    // Uses 'urls' (plural) as required by PeerJS internal config format.
+    if ((Peer as any).util?.defaultConfig) {
+      (Peer as any).util.defaultConfig = {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          {
+            urls: [
+              "turn:178.105.26.234:3478",
+              "turn:178.105.26.234:3478?transport=tcp",
+            ],
+            username: "game",
+            credential: "pongturn2026",
+          },
+        ],
+        sdpSemantics: "unified-plan",
+      };
+    }
     this.isHostPeer = false;
     this.peerId = "pong-" + Math.random().toString(36).substring(2, 10);
     log("joinHost", "peerId=", this.peerId, "hostId=", hostId);
@@ -133,22 +157,6 @@ export class MultiplayerPeer {
       try {
         this.peer = new Peer(this.peerId, {
           debug: process.env.NODE_ENV === "development" ? 2 : 0,
-          config: {
-            iceServers: [
-              { url: "stun:stun.l.google.com:19302" },
-              { url: "stun:stun1.l.google.com:19302" },
-              {
-                url: "turn:178.105.26.234:3478",
-                username: "game",
-                credential: "pongturn2026",
-              },
-              {
-                url: "turn:178.105.26.234:3478?transport=tcp",
-                username: "game",
-                credential: "pongturn2026",
-              },
-            ],
-          },
         });
       } catch (err) {
         log("joinHost", "Peer constructor error:", err);
@@ -161,22 +169,6 @@ export class MultiplayerPeer {
 
         const conn = this.peer!.connect(hostId, {
           reliable: true,
-          config: {
-            iceServers: [
-              { url: "stun:stun.l.google.com:19302" },
-              { url: "stun:stun1.l.google.com:19302" },
-              {
-                url: "turn:178.105.26.234:3478",
-                username: "game",
-                credential: "pongturn2026",
-              },
-              {
-                url: "turn:178.105.26.234:3478?transport=tcp",
-                username: "game",
-                credential: "pongturn2026",
-              },
-            ],
-          },
         });
         this.conn = conn;
 
