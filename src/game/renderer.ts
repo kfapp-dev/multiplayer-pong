@@ -48,15 +48,6 @@ export class Renderer {
     ctx.arc(W / 2, W / 2, 50, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Scores — in flipped view, score positions are mirrored so they read correctly
-    ctx.fillStyle = "#888";
-    ctx.font = "bold 72px monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    // score2 (opponent) shown at top, score1 (self) at bottom — same positions, just flipped
-    ctx.fillText(String(state.score2), W / 2, W / 2 - 60);
-    ctx.fillText(String(state.score1), W / 2, W / 2 + 60);
-
     // Paddle 2 (top — opponent in host view, self in guest view)
     ctx.fillStyle = "#fff";
     ctx.fillRect(state.paddle2X, 10, PADDLE_WIDTH, PADDLE_HEIGHT);
@@ -71,15 +62,38 @@ export class Renderer {
     ctx.arc(state.ballX, state.ballY, BALL_RADIUS, 0, Math.PI * 2);
     ctx.fill();
 
-    // Paused indicator
+    // Paused indicator (drawn in flipped space so it's upright for both views)
     if (state.paused) {
-      ctx.fillStyle = "#666";
-      ctx.font = "bold 40px monospace";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("?", W / 2, W / 2);
+      if (this.flip) {
+        // Counter-flip the text so it reads correctly for guest
+        ctx.save();
+        ctx.scale(1, -1);
+        ctx.fillStyle = "#666";
+        ctx.font = "bold 40px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("?", W / 2, -(W / 2));
+        ctx.restore();
+      } else {
+        ctx.fillStyle = "#666";
+        ctx.font = "bold 40px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("?", W / 2, W / 2);
+      }
     }
 
     ctx.restore();
+
+    // Draw scores OUTSIDE the flip transform so text is always upright
+    // For host (no flip): score2 at top, score1 at bottom
+    // For guest (flipped): opponent (score2) should appear at top of screen,
+    //   self (score1) at bottom — same visual positions
+    ctx.fillStyle = "#888";
+    ctx.font = "bold 72px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(state.score2), W / 2, W / 2 - 60);
+    ctx.fillText(String(state.score1), W / 2, W / 2 + 60);
   }
 }

@@ -559,12 +559,14 @@ export default function Game() {
       let gameX = (t.clientX / screenW) * GAME_WIDTH;
       gameX = Math.max(PADDLE_WIDTH / 2, Math.min(GAME_WIDTH - PADDLE_WIDTH / 2, gameX));
       paddleXRef.current = gameX - PADDLE_WIDTH / 2;
-      stateRef.current.paddle1X = paddleXRef.current;
 
-      // Guest: send paddle position to host (guest controls paddle2)
       if (modeRef.current === "multi-guest") {
+        // Guest controls paddle2 (top in host coords, bottom in flipped view)
         stateRef.current.paddle2X = paddleXRef.current;
         peerRef.current?.sendInput(stateRef.current.paddle2X);
+      } else {
+        // Host / single: control paddle1 (bottom)
+        stateRef.current.paddle1X = paddleXRef.current;
       }
     };
     window.addEventListener("touchmove", onTouchMove, { passive: true });
