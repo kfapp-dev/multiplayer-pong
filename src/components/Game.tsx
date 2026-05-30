@@ -198,7 +198,6 @@ export default function Game() {
   const [landscape, setLandscape] = useState(false);
   const [showWinTarget, setShowWinTarget] = useState(false);
   const [showQR, setShowQR] = useState(false);
-  const [mpConnected, setMpConnected] = useState(false);
   const [winTarget, setWinTarget] = useState<WinTarget | null>(null);
   const [roundOver, setRoundOver] = useState<RoundResult | null>(null);
   const [scoreHistory, setScoreHistory] = useState<RoundResult[]>([]);
@@ -206,11 +205,6 @@ export default function Game() {
   const [disconnected, setDisconnected] = useState(false);
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
-
-  // Dismiss QR when guest connects
-  useEffect(() => {
-    if (mpConnected && showQR) setShowQR(false);
-  }, [mpConnected, showQR]);
 
   // ── Init single player ──────────────────────────────────────────────
   const initSinglePlayer = useCallback(() => {
@@ -224,7 +218,6 @@ export default function Game() {
     modeRef.current = "single";
     setShowWinTarget(false);
     setShowQR(false);
-    setMpConnected(false);
     setRoundOver(null);
     setDisconnected(false);
     setWinTarget(null);
@@ -259,9 +252,12 @@ export default function Game() {
       }
     });
 
+    peer.onConnect(() => {
+      setShowQR(false);
+    });
+
     peer.onStatus((status: string) => {
-      if (status === "connected") setMpConnected(true);
-      if (status === "disconnected") { setMpConnected(false); setDisconnected(true); }
+      if (status === "disconnected") setDisconnected(true);
     });
 
     try {
@@ -318,8 +314,11 @@ export default function Game() {
       }
     });
 
+    peer.onConnect(() => {
+      peer.sendReady();
+    });
+
     peer.onStatus((status: string) => {
-      if (status === "connected") { setMpConnected(true); peer.sendReady(); }
       if (status === "disconnected") { setDisconnected(true); }
     });
 

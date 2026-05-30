@@ -2,6 +2,7 @@ import { GameState, MultiplayerMessage } from "../game/types";
 
 type MessageHandler = (msg: MultiplayerMessage) => void;
 type StatusHandler = (status: string) => void;
+type ConnectHandler = () => void;
 
 export class MultiplayerPeer {
   private peer: any = null;
@@ -9,6 +10,7 @@ export class MultiplayerPeer {
   private isHostPeer: boolean = false;
   private messageHandler: MessageHandler | null = null;
   private statusHandler: StatusHandler | null = null;
+  private connectHandler: ConnectHandler | null = null;
   private peerId: string = "";
 
   onMessage(handler: MessageHandler): void {
@@ -17,6 +19,10 @@ export class MultiplayerPeer {
 
   onStatus(handler: StatusHandler): void {
     this.statusHandler = handler;
+  }
+
+  onConnect(handler: ConnectHandler): void {
+    this.connectHandler = handler;
   }
 
   get isHost(): boolean {
@@ -48,6 +54,7 @@ export class MultiplayerPeer {
         this.conn = conn;
         conn.on("open", () => {
           this.statusHandler?.("connected");
+          this.connectHandler?.();
         });
         conn.on("data", (data: unknown) => {
           this.messageHandler?.(data as MultiplayerMessage);
@@ -87,6 +94,7 @@ export class MultiplayerPeer {
 
         conn.on("open", () => {
           this.statusHandler?.("connected");
+          this.connectHandler?.();
           resolve();
         });
 
