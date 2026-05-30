@@ -52,6 +52,22 @@ export class MultiplayerPeer {
       try {
         this.peer = new Peer(this.peerId, {
           debug: process.env.NODE_ENV === "development" ? 2 : 0,
+          config: {
+            iceServers: [
+              { url: "stun:stun.l.google.com:19302" },
+              { url: "stun:stun1.l.google.com:19302" },
+              {
+                url: "turn:178.105.26.234:3478",
+                username: "game",
+                credential: "pongturn2026",
+              },
+              {
+                url: "turn:178.105.26.234:3478?transport=tcp",
+                username: "game",
+                credential: "pongturn2026",
+              },
+            ],
+          },
         });
       } catch (err) {
         log("createHost", "Peer constructor error:", err);
@@ -117,6 +133,22 @@ export class MultiplayerPeer {
       try {
         this.peer = new Peer(this.peerId, {
           debug: process.env.NODE_ENV === "development" ? 2 : 0,
+          config: {
+            iceServers: [
+              { url: "stun:stun.l.google.com:19302" },
+              { url: "stun:stun1.l.google.com:19302" },
+              {
+                url: "turn:178.105.26.234:3478",
+                username: "game",
+                credential: "pongturn2026",
+              },
+              {
+                url: "turn:178.105.26.234:3478?transport=tcp",
+                username: "game",
+                credential: "pongturn2026",
+              },
+            ],
+          },
         });
       } catch (err) {
         log("joinHost", "Peer constructor error:", err);
@@ -134,19 +166,14 @@ export class MultiplayerPeer {
               { url: "stun:stun.l.google.com:19302" },
               { url: "stun:stun1.l.google.com:19302" },
               {
-                url: "turn:staticauth.openrelay.metered.ca:80",
-                username: "openrelayproject",
-                credential: "openrelayprojectsecret",
+                url: "turn:178.105.26.234:3478",
+                username: "game",
+                credential: "pongturn2026",
               },
               {
-                url: "turn:staticauth.openrelay.metered.ca:80?transport=tcp",
-                username: "openrelayproject",
-                credential: "openrelayprojectsecret",
-              },
-              {
-                url: "turns:staticauth.openrelay.metered.ca:443",
-                username: "openrelayproject",
-                credential: "openrelayprojectsecret",
+                url: "turn:178.105.26.234:3478?transport=tcp",
+                username: "game",
+                credential: "pongturn2026",
               },
             ],
           },
