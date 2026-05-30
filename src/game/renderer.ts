@@ -86,14 +86,19 @@ export class Renderer {
     ctx.restore();
 
     // Draw scores OUTSIDE the flip transform so text is always upright
-    // For host (no flip): score2 at top, score1 at bottom
-    // For guest (flipped): opponent (score2) should appear at top of screen,
-    //   self (score1) at bottom — same visual positions
+    // Host (no flip): score2 (opponent, top) at top, score1 (self, bottom) at bottom
+    // Guest (flipped): score2 (self, top in world coords) should appear at bottom of screen,
+    //   score1 (opponent) at top — swap positions so "my score is always at bottom"
     ctx.fillStyle = "#888";
     ctx.font = "bold 72px monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(String(state.score2), W / 2, W / 2 - 60);
-    ctx.fillText(String(state.score1), W / 2, W / 2 + 60);
+    if (this.flip) {
+      ctx.fillText(String(state.score1), W / 2, W / 2 - 60);
+      ctx.fillText(String(state.score2), W / 2, W / 2 + 60);
+    } else {
+      ctx.fillText(String(state.score2), W / 2, W / 2 - 60);
+      ctx.fillText(String(state.score1), W / 2, W / 2 + 60);
+    }
   }
 }
