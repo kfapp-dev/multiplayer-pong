@@ -42,29 +42,6 @@ export class MultiplayerPeer {
     return this.conn !== null && this.conn.open;
   }
 
-  private makeIceServers(): any[] {
-    return [
-      { url: "stun:stun.l.google.com:19302" },
-      { url: "stun:stun1.l.google.com:19302" },
-      { url: "stun:global.stun.twilio.com:3478" },
-      {
-        url: "turn:staticauth.openrelay.metered.ca:80",
-        username: "openrelayproject",
-        credential: "openrelayprojectsecret",
-      },
-      {
-        url: "turn:staticauth.openrelay.metered.ca:80?transport=tcp",
-        username: "openrelayproject",
-        credential: "openrelayprojectsecret",
-      },
-      {
-        url: "turns:staticauth.openrelay.metered.ca:443",
-        username: "openrelayproject",
-        credential: "openrelayprojectsecret",
-      },
-    ];
-  }
-
   async createHost(): Promise<string> {
     const Peer = (await import("peerjs")).default;
     this.peerId = "pong-" + Math.random().toString(36).substring(2, 10);
@@ -75,7 +52,6 @@ export class MultiplayerPeer {
       try {
         this.peer = new Peer(this.peerId, {
           debug: process.env.NODE_ENV === "development" ? 2 : 0,
-          config: { iceServers: this.makeIceServers() },
         });
       } catch (err) {
         log("createHost", "Peer constructor error:", err);
@@ -141,7 +117,6 @@ export class MultiplayerPeer {
       try {
         this.peer = new Peer(this.peerId, {
           debug: process.env.NODE_ENV === "development" ? 2 : 0,
-          config: { iceServers: this.makeIceServers() },
         });
       } catch (err) {
         log("joinHost", "Peer constructor error:", err);
@@ -152,7 +127,30 @@ export class MultiplayerPeer {
       this.peer.on("open", (id: string) => {
         log("joinHost", "peer signaling open, id=", id, "connecting to", hostId);
 
-        const conn = this.peer!.connect(hostId, { reliable: true });
+        const conn = this.peer!.connect(hostId, {
+          reliable: true,
+          config: {
+            iceServers: [
+              { url: "stun:stun.l.google.com:19302" },
+              { url: "stun:stun1.l.google.com:19302" },
+              {
+                url: "turn:staticauth.openrelay.metered.ca:80",
+                username: "openrelayproject",
+                credential: "openrelayprojectsecret",
+              },
+              {
+                url: "turn:staticauth.openrelay.metered.ca:80?transport=tcp",
+                username: "openrelayproject",
+                credential: "openrelayprojectsecret",
+              },
+              {
+                url: "turns:staticauth.openrelay.metered.ca:443",
+                username: "openrelayproject",
+                credential: "openrelayprojectsecret",
+              },
+            ],
+          },
+        });
         this.conn = conn;
 
         conn.on("open", () => {
