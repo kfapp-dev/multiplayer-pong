@@ -3,6 +3,7 @@ import { GameState, MultiplayerMessage } from "../game/types";
 type MessageHandler = (msg: MultiplayerMessage) => void;
 type StatusHandler = (status: string) => void;
 type ConnectHandler = () => void;
+type VoiceTrackHandler = (stream: MediaStream) => void;
 
 function log(tag: string, ...args: unknown[]) {
   console.log(`[pong:${tag}]`, ...args);
@@ -15,7 +16,10 @@ export class MultiplayerPeer {
   private messageHandler: MessageHandler | null = null;
   private statusHandler: StatusHandler | null = null;
   private connectHandler: ConnectHandler | null = null;
+  private voiceTrackHandler: VoiceTrackHandler | null = null;
   private _peerId: string = "";
+  private micStream: MediaStream | null = null;
+  private remoteAudioEl: HTMLAudioElement | null = null;
 
   onMessage(handler: MessageHandler): void {
     this.messageHandler = handler;
@@ -29,6 +33,10 @@ export class MultiplayerPeer {
     this.connectHandler = handler;
   }
 
+  onVoiceTrack(handler: VoiceTrackHandler): void {
+    this.voiceTrackHandler = handler;
+  }
+
   get isHost(): boolean {
     return this.isHostPeer;
   }
@@ -39,6 +47,108 @@ export class MultiplayerPeer {
 
   get connected(): boolean {
     return this.conn !== null && this.conn.open;
+  }
+
+  /** Get the underlying RTCPeerConnection from the active data channel. */
+  getPeerConnection(): RTCPeerConnection | null {
+    if (!this.conn) return null;
+    const c = this.conn as any;
+    return c.peerConnection || c._pc || c.provider?.peerConnection || null;
+  }
+
+  /**
+   * Enable voice chat: request mic, add audio track to the existing PC.
+   * Returns true if mic was acquired successfully.
+   */
+  async enableVoice(): Promise<boolean> {
+    try {
+      this.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
+    } catch (err) {
+      log("voice", "getUserMedia failed:", err);
+      return false;
+    }
+
+    const pc = this.getPeerConnection();
+    if (!pc) {
+      log("voice", "no peer connection available");
+      this.micStream.getTracks().forEach((t) => t.stop());
+      this.micStream = null;
+      return false;
+    }
+
+    // Add mic tracks to the existing peer connection
+    for (const track of this.micStream.getTracks()) {
+      pc.addTrack(track, this.micStream);
+    }
+    log("voice", "mic track added to peer connection");
+
+    // Signal the other side that voice is active
+    this.send({ type: "voice-start" } as MultiplayerMessage);
+    return true;
+  }
+
+  /** Disable voice chat: stop mic, remove tracks from PC. */
+  disableVoice(): void {
+    const pc = this.getPeerConnection();
+    if (pc) {
+      for (const sender of pc.getSenders()) {
+        if (sender.track?.kind === "audio") {
+          pc.removeTrack(sender);
+        }
+      }
+    }
+    if (this.micStream) {
+      this.micStream.getTracks().forEach((t) => t.stop());
+      this.micStream = null;
+    }
+    this.send({ type: "voice-stop" } as MultiplayerMessage);
+    log("voice", "mic disabled");
+  }
+
+  /** Handle incoming voice-start / voice-stop messages. */
+  private handleVoiceMessage(msg: MultiplayerMessage): void {
+    if (msg.type === "voice-start") {
+      log("voice", "remote peer enabled voice");
+      // The remote side added a track — ontrack will fire on the PC
+    }
+    if (msg.type === "voice-stop") {
+      log("voice", "remote peer disabled voice");
+      if (this.remoteAudioEl) {
+        this.remoteAudioEl.srcObject = null;
+      }
+    }
+  }
+
+  /**
+   * Set up the RTCPeerConnection ontrack handler to receive remote audio.
+   * Call this after the connection is established.
+   */
+  private setupVoiceReceivers(): void {
+    const pc = this.getPeerConnection();
+    if (!pc) return;
+
+    // Create a hidden audio element for remote audio
+    if (!this.remoteAudioEl) {
+      this.remoteAudioEl = document.createElement("audio");
+      this.remoteAudioEl.autoplay = true;
+      (this.remoteAudioEl as any).playsInline = true;
+      // Don't add to DOM — it's invisible
+    }
+
+    pc.ontrack = (event: RTCTrackEvent) => {
+      log("voice", "received remote track:", event.track.kind);
+      if (event.track.kind === "audio" && event.streams[0]) {
+        this.remoteAudioEl!.srcObject = event.streams[0];
+        this.voiceTrackHandler?.(event.streams[0]);
+      }
+    };
   }
 
   /**
@@ -126,12 +236,18 @@ export class MultiplayerPeer {
 
         conn.on("open", () => {
           log("createHost", "data channel open with", conn.peer);
+          this.setupVoiceReceivers();
           this.statusHandler?.("connected");
           this.connectHandler?.();
         });
 
         conn.on("data", (data: unknown) => {
-          this.messageHandler?.(data as MultiplayerMessage);
+          const msg = data as MultiplayerMessage;
+          if (msg.type === "voice-start" || msg.type === "voice-stop") {
+            this.handleVoiceMessage(msg);
+          } else {
+            this.messageHandler?.(msg);
+          }
         });
 
         conn.on("close", () => {
@@ -205,13 +321,19 @@ export class MultiplayerPeer {
 
         conn.on("open", () => {
           log("joinHost", "data channel open");
+          this.setupVoiceReceivers();
           this.statusHandler?.("connected");
           this.connectHandler?.();
           resolve();
         });
 
         conn.on("data", (data: unknown) => {
-          this.messageHandler?.(data as MultiplayerMessage);
+          const msg = data as MultiplayerMessage;
+          if (msg.type === "voice-start" || msg.type === "voice-stop") {
+            this.handleVoiceMessage(msg);
+          } else {
+            this.messageHandler?.(msg);
+          }
         });
 
         conn.on("close", () => {
@@ -282,6 +404,11 @@ export class MultiplayerPeer {
   }
 
   disconnect(): void {
+    this.disableVoice();
+    if (this.remoteAudioEl) {
+      this.remoteAudioEl.srcObject = null;
+      this.remoteAudioEl = null;
+    }
     if (this.conn) {
       this.conn.close();
       this.conn = null;

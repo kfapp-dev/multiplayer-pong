@@ -215,6 +215,8 @@ export default function Game() {
   const [showHistory, setShowHistory] = useState(false);
   const [disconnected, setDisconnected] = useState(false);
   const [connStatus, setConnStatus] = useState("");
+  const [micEnabled, setMicEnabled] = useState(false);
+  const [remoteVoiceActive, setRemoteVoiceActive] = useState(false);
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
 
@@ -237,6 +239,8 @@ export default function Game() {
     setScoreHistory([]);
     setShowHistory(false);
     setConnStatus("");
+    setMicEnabled(false);
+    setRemoteVoiceActive(false);
   }, []);
 
   // ── Start hosting ───────────────────────────────────────────────────
@@ -277,8 +281,13 @@ export default function Game() {
     peer.onStatus((status: string) => {
       log("onStatus", status);
       if (status === "connected") setConnStatus("Connected — waiting for guest...");
-      if (status === "disconnected") { setDisconnected(true); setConnStatus(""); }
+      if (status === "disconnected") { setDisconnected(true); setConnStatus(""); setMicEnabled(false); setRemoteVoiceActive(false); }
       if (status === "error") { setConnStatus("Connection error — check console"); }
+    });
+
+    peer.onVoiceTrack((_stream: MediaStream) => {
+      log("onVoiceTrack", "remote voice stream received");
+      setRemoteVoiceActive(true);
     });
 
     try {
@@ -355,8 +364,13 @@ export default function Game() {
     peer.onStatus((status: string) => {
       log("joinHost onStatus", status);
       if (status === "connected") setConnStatus("Connected to signaling server, opening data channel...");
-      if (status === "disconnected") { setDisconnected(true); setConnStatus(""); }
+      if (status === "disconnected") { setDisconnected(true); setConnStatus(""); setMicEnabled(false); setRemoteVoiceActive(false); }
       if (status === "error") { setConnStatus("Connection error — check console"); }
+    });
+
+    peer.onVoiceTrack((_stream: MediaStream) => {
+      log("joinHost onVoiceTrack", "remote voice stream received");
+      setRemoteVoiceActive(true);
     });
 
     try {
@@ -629,7 +643,51 @@ export default function Game() {
       )}
 
       {/* Square game canvas */}
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 relative">
+        {/* Mic button — top right, multiplayer connected only */}
+        {mode !== "single" && !showQR && !showWinTarget && !disconnected && peerRef.current?.connected && (
+          <button
+            onClick={async () => {
+              const peer = peerRef.current;
+              if (!peer) return;
+              if (micEnabled) {
+                peer.disableVoice();
+                setMicEnabled(false);
+              } else {
+                const ok = await peer.enableVoice();
+                if (ok) setMicEnabled(true);
+              }
+            }}
+            className="absolute top-3 right-3 z-30 bg-black/60 border border-gray-600 rounded-full w-11 h-11 flex items-center justify-center active:bg-gray-800"
+            title={micEnabled ? "Mute microphone" : "Enable voice chat"}
+          >
+            {micEnabled ? (
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="#4ade80" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            ) : (
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            )}
+          </button>
+        )}
+        {/* Remote voice indicator */}
+        {remoteVoiceActive && (
+          <div className="absolute top-3 left-3 z-30 bg-black/60 border border-green-600 rounded-full px-3 py-1.5 flex items-center gap-1.5">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="#4ade80" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            </svg>
+            <span className="text-green-400 font-mono text-[10px]">VOICE</span>
+          </div>
+        )}
         <canvas
           ref={canvasRef}
           className="block w-full h-full"
