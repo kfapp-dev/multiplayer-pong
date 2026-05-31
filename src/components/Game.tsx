@@ -340,6 +340,13 @@ export default function Game() {
     peer.onMessage((msg: { type: string; [key: string]: unknown }) => {
       const s = stateRef.current;
       switch (msg.type) {
+        case "sound": {
+          // Play sound effects triggered by host's physics engine
+          if (msg.event === "paddle-hit") playPaddleHit();
+          else if (msg.event === "wall") playWallHit();
+          else if (msg.event === "score1" || msg.event === "score2") playScore();
+          break;
+        }
         case "state": {
           if (msg.state) {
             // Guest: don't overwrite paddle2X — local touch is authoritative
@@ -454,6 +461,10 @@ export default function Game() {
 
       paddleXRef.current = state.paddle1X;
       peerRef.current?.sendState(state);
+      // Send sound event to guest so they can play it too
+      if (soundEvent) {
+        peerRef.current?.send({ type: "sound", event: soundEvent });
+      }
 
       if (winTarget && !roundOver) {
         const gameOver = state.score1 >= winTarget || state.score2 >= winTarget;
@@ -628,7 +639,7 @@ export default function Game() {
   }
 
   return (
-    <div className="h-screen w-screen bg-black flex flex-col overflow-hidden">
+    <div className="h-dvh w-screen bg-black flex flex-col overflow-hidden">
       {/* Overlays */}
       {showWinTarget && !showQR && (
         <WinTargetOverlay
