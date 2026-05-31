@@ -327,7 +327,10 @@ export default function Game() {
       switch (msg.type) {
         case "state": {
           if (msg.state) {
+            // Guest: don't overwrite paddle2X — local touch is authoritative
+            const savedPaddle2X = s.paddle2X;
             Object.assign(s, msg.state);
+            s.paddle2X = savedPaddle2X;
             if (s.score1 > prevScoreRef.current.score1) playScore();
             if (s.score2 > prevScoreRef.current.score2) playScore();
             prevScoreRef.current = { score1: s.score1, score2: s.score2 };

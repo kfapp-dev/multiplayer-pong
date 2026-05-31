@@ -31,7 +31,12 @@ export class Renderer {
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, W, W);
 
-    // Center line
+    // Dashed border around the full play area
+    ctx.setLineDash([8, 6]);
+    ctx.strokeStyle = "#333";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, W - 2, W - 2);
+    ctx.setLineDash([]);
     ctx.setLineDash([10, 10]);
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 2;
