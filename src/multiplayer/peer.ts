@@ -19,7 +19,10 @@ export class MultiplayerPeer {
   private voiceTrackHandler: VoiceTrackHandler | null = null;
   private _peerId: string = "";
   private micStream: MediaStream | null = null;
+  private audioPc: RTCPeerConnection | null = null;
   private remoteAudioEl: HTMLAudioElement | null = null;
+  private voiceNegotiationComplete = false;
+  private voiceOfferSent = false;
 
   onMessage(handler: MessageHandler): void {
     this.messageHandler = handler;
@@ -49,16 +52,27 @@ export class MultiplayerPeer {
     return this.conn !== null && this.conn.open;
   }
 
-  /** Get the underlying RTCPeerConnection from the active data channel. */
-  getPeerConnection(): RTCPeerConnection | null {
-    if (!this.conn) return null;
-    const c = this.conn as any;
-    return c.peerConnection || c._pc || c.provider?.peerConnection || null;
+  // ── Voice chat via separate audio-only RTCPeerConnection ──────────
+
+  /** Get the same ICE servers we use for the patched PC. */
+  private getIceServers(): RTCIceServer[] {
+    return [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      {
+        urls: [
+          "turn:178.105.26.234:3478",
+          "turn:178.105.26.234:3478?transport=tcp",
+        ],
+        username: "game",
+        credential: "pongturn2026",
+      },
+    ];
   }
 
   /**
-   * Enable voice chat: request mic, add audio track to the existing PC.
-   * Returns true if mic was acquired successfully.
+   * Enable voice: request mic, create audio-only RTCPeerConnection,
+   * add mic track, create offer, signal via data channel.
    */
   async enableVoice(): Promise<boolean> {
     try {
@@ -75,81 +89,250 @@ export class MultiplayerPeer {
       return false;
     }
 
-    const pc = this.getPeerConnection();
-    if (!pc) {
-      log("voice", "no peer connection available");
-      this.micStream.getTracks().forEach((t) => t.stop());
-      this.micStream = null;
+    // Create a separate audio-only peer connection
+    this.audioPc = new RTCPeerConnection({
+      iceServers: this.getIceServers(),
+    });
+
+    // Add mic track
+    for (const track of this.micStream.getTracks()) {
+      this.audioPc.addTrack(track, this.micStream);
+    }
+
+    // Handle incoming remote audio
+    this.audioPc.ontrack = (event: RTCTrackEvent) => {
+      log("voice", "received remote audio track");
+      if (event.track.kind === "audio" && event.streams[0]) {
+        if (!this.remoteAudioEl) {
+          this.remoteAudioEl = document.createElement("audio");
+          this.remoteAudioEl.autoplay = true;
+          (this.remoteAudioEl as any).playsInline = true;
+        }
+        this.remoteAudioEl.srcObject = event.streams[0];
+        this.voiceTrackHandler?.(event.streams[0]);
+      }
+    };
+
+    // ICE candidate gathering — send to remote via data channel
+    this.audioPc.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
+      if (event.candidate) {
+        this.send({
+          type: "voice-ice",
+          candidate: event.candidate.toJSON(),
+        } as MultiplayerMessage);
+      }
+    };
+
+    this.audioPc.oniceconnectionstatechange = () => {
+      log("voice", "audio ICE state:", this.audioPc?.iceConnectionState);
+    };
+
+    // Set up receiver for ICE candidates from remote
+    this.setupVoiceReceiver();
+
+    // Create offer
+    try {
+      const offer = await this.audioPc.createOffer();
+      await this.audioPc.setLocalDescription(offer);
+      this.voiceOfferSent = true;
+      this.send({
+        type: "voice-offer",
+        sdp: offer.sdp,
+      } as MultiplayerMessage);
+      log("voice", "sent voice-offer");
+    } catch (err) {
+      log("voice", "createOffer failed:", err);
+      this.cleanupVoice();
       return false;
     }
 
-    // Add mic tracks to the existing peer connection
-    for (const track of this.micStream.getTracks()) {
-      pc.addTrack(track, this.micStream);
-    }
-    log("voice", "mic track added to peer connection");
-
-    // Signal the other side that voice is active
-    this.send({ type: "voice-start" } as MultiplayerMessage);
     return true;
   }
 
-  /** Disable voice chat: stop mic, remove tracks from PC. */
+  /** Disable voice: stop everything. */
   disableVoice(): void {
-    const pc = this.getPeerConnection();
-    if (pc) {
-      for (const sender of pc.getSenders()) {
-        if (sender.track?.kind === "audio") {
-          pc.removeTrack(sender);
-        }
-      }
-    }
+    this.send({ type: "voice-stop" } as MultiplayerMessage);
+    this.cleanupVoice();
+    log("voice", "voice disabled");
+  }
+
+  private cleanupVoice(): void {
     if (this.micStream) {
       this.micStream.getTracks().forEach((t) => t.stop());
       this.micStream = null;
     }
-    this.send({ type: "voice-stop" } as MultiplayerMessage);
-    log("voice", "mic disabled");
-  }
-
-  /** Handle incoming voice-start / voice-stop messages. */
-  private handleVoiceMessage(msg: MultiplayerMessage): void {
-    if (msg.type === "voice-start") {
-      log("voice", "remote peer enabled voice");
-      // The remote side added a track — ontrack will fire on the PC
+    if (this.audioPc) {
+      this.audioPc.ontrack = null;
+      this.audioPc.onicecandidate = null;
+      this.audioPc.oniceconnectionstatechange = null;
+      this.audioPc.close();
+      this.audioPc = null;
     }
-    if (msg.type === "voice-stop") {
-      log("voice", "remote peer disabled voice");
-      if (this.remoteAudioEl) {
-        this.remoteAudioEl.srcObject = null;
-      }
+    if (this.remoteAudioEl) {
+      this.remoteAudioEl.srcObject = null;
+      this.remoteAudioEl = null;
     }
+    this.voiceNegotiationComplete = false;
+    this.voiceOfferSent = false;
   }
 
   /**
-   * Set up the RTCPeerConnection ontrack handler to receive remote audio.
-   * Call this after the connection is established.
+   * Handle incoming voice signaling messages.
+   * Called from the data channel on("data") handler.
    */
-  private setupVoiceReceivers(): void {
-    const pc = this.getPeerConnection();
-    if (!pc) return;
-
-    // Create a hidden audio element for remote audio
-    if (!this.remoteAudioEl) {
-      this.remoteAudioEl = document.createElement("audio");
-      this.remoteAudioEl.autoplay = true;
-      (this.remoteAudioEl as any).playsInline = true;
-      // Don't add to DOM — it's invisible
+  handleVoiceMessage(msg: MultiplayerMessage): void {
+    if (!this.audioPc && msg.type !== "voice-offer") {
+      // Not in voice mode and not receiving an offer — ignore
+      return;
     }
 
-    pc.ontrack = (event: RTCTrackEvent) => {
-      log("voice", "received remote track:", event.track.kind);
-      if (event.track.kind === "audio" && event.streams[0]) {
-        this.remoteAudioEl!.srcObject = event.streams[0];
-        this.voiceTrackHandler?.(event.streams[0]);
-      }
-    };
+    switch (msg.type) {
+      case "voice-offer":
+        this.handleVoiceOffer(msg);
+        break;
+      case "voice-answer":
+        this.handleVoiceAnswer(msg);
+        break;
+      case "voice-ice":
+        this.handleVoiceIce(msg);
+        break;
+      case "voice-stop":
+        log("voice", "remote peer disabled voice");
+        if (this.remoteAudioEl) {
+          this.remoteAudioEl.srcObject = null;
+        }
+        break;
+    }
   }
+
+  /** Handle incoming voice-offer: create answer. */
+  private async handleVoiceOffer(msg: MultiplayerMessage): Promise<void> {
+    log("voice", "received voice-offer");
+
+    // Collision: both sides sent offers. Lexicographically smaller peer ID wins.
+    if (this.voiceOfferSent && this.audioPc) {
+      // PeerJS conn.peer is the remote peer's ID
+      const remotePeer = this.conn?.peer || "";
+      if (this._peerId < remotePeer) {
+        log("voice", "offer collision — we win (smaller id), ignoring remote offer");
+        return;
+      } else {
+        log("voice", "offer collision — we lose, resetting our offer to answer theirs");
+        // Reset: close current PC, create new one to answer
+        if (this.audioPc) {
+          this.audioPc.close();
+          this.audioPc = null;
+        }
+        this.voiceOfferSent = false;
+        this.voiceNegotiationComplete = false;
+        // Fall through to normal answer flow below
+      }
+    }
+
+    if (!this.audioPc) {
+      // We received an offer — create the PC and get mic
+      this.audioPc = new RTCPeerConnection({
+        iceServers: this.getIceServers(),
+      });
+
+      this.audioPc.ontrack = (event: RTCTrackEvent) => {
+        log("voice", "received remote audio track");
+        if (event.track.kind === "audio" && event.streams[0]) {
+          if (!this.remoteAudioEl) {
+            this.remoteAudioEl = document.createElement("audio");
+            this.remoteAudioEl.autoplay = true;
+            (this.remoteAudioEl as any).playsInline = true;
+          }
+          this.remoteAudioEl.srcObject = event.streams[0];
+          this.voiceTrackHandler?.(event.streams[0]);
+        }
+      };
+
+      this.audioPc.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
+        if (event.candidate) {
+          this.send({
+            type: "voice-ice",
+            candidate: event.candidate.toJSON(),
+          } as MultiplayerMessage);
+        }
+      };
+
+      this.audioPc.oniceconnectionstatechange = () => {
+        log("voice", "audio ICE state:", this.audioPc?.iceConnectionState);
+      };
+
+      // Request mic on our side too
+      try {
+        this.micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
+        for (const track of this.micStream.getTracks()) {
+          this.audioPc.addTrack(track, this.micStream);
+        }
+        log("voice", "mic acquired for answer side");
+      } catch (err) {
+        log("voice", "getUserMedia failed on answer side:", err);
+      }
+    }
+
+    try {
+      await this.audioPc.setRemoteDescription({
+        type: "offer",
+        sdp: msg.sdp as string,
+      });
+      const answer = await this.audioPc.createAnswer();
+      await this.audioPc.setLocalDescription(answer);
+      this.send({
+        type: "voice-answer",
+        sdp: answer.sdp,
+      } as MultiplayerMessage);
+      log("voice", "sent voice-answer");
+      this.setupVoiceReceiver();
+    } catch (err) {
+      log("voice", "handleVoiceOffer error:", err);
+    }
+  }
+
+  /** Handle incoming voice-answer: set remote description. */
+  private async handleVoiceAnswer(msg: MultiplayerMessage): Promise<void> {
+    log("voice", "received voice-answer");
+    if (!this.audioPc) return;
+    try {
+      await this.audioPc.setRemoteDescription({
+        type: "answer",
+        sdp: msg.sdp as string,
+      });
+      this.voiceNegotiationComplete = true;
+      log("voice", "voice negotiation complete");
+    } catch (err) {
+      log("voice", "handleVoiceAnswer error:", err);
+    }
+  }
+
+  /** Handle incoming ICE candidate. */
+  private async handleVoiceIce(msg: MultiplayerMessage): Promise<void> {
+    if (!this.audioPc) return;
+    try {
+      const candidate = new RTCIceCandidate(msg.candidate as RTCIceCandidateInit);
+      await this.audioPc.addIceCandidate(candidate);
+    } catch (err) {
+      log("voice", "addIceCandidate error:", err);
+    }
+  }
+
+  /** Set up voice receiver for ICE candidates on an existing PC. */
+  private setupVoiceReceiver(): void {
+    // ICE candidates are already being sent from onicecandidate.
+    // This method is just a marker that the full flow is set up.
+    log("voice", "voice receiver ready");
+  }
+
+  // ── ICE server patching for PeerJS ─────────────────────────────────
 
   /**
    * Patch RTCPeerConnection BEFORE PeerJS loads so that PeerJS's
@@ -190,6 +373,8 @@ export class MultiplayerPeer {
     log("peer", "RTCPeerConnection patched with TURN/STUN servers");
   }
 
+  // ── Host / Guest connection ────────────────────────────────────────
+
   async createHost(): Promise<string> {
     // Patch BEFORE importing PeerJS
     MultiplayerPeer.patchIceServers();
@@ -217,33 +402,17 @@ export class MultiplayerPeer {
       this.peer.on("connection", (conn: any) => {
         log("createHost", "incoming connection from", conn.peer);
 
-        // Access the underlying RTCPeerConnection and log ICE config
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const anyConn = conn as any;
-        const pc =
-          anyConn.peerConnection ||
-          anyConn._pc ||
-          anyConn.provider?.peerConnection;
-        if (pc) {
-          log(
-            "createHost",
-            "peerConnection ICE servers:",
-            JSON.stringify(pc.getConfiguration?.()?.iceServers?.map((s: any) => s.urls) || "unknown")
-          );
-        }
-
         this.conn = conn;
 
         conn.on("open", () => {
           log("createHost", "data channel open with", conn.peer);
-          this.setupVoiceReceivers();
           this.statusHandler?.("connected");
           this.connectHandler?.();
         });
 
         conn.on("data", (data: unknown) => {
           const msg = data as MultiplayerMessage;
-          if (msg.type === "voice-start" || msg.type === "voice-stop") {
+          if (msg.type.startsWith("voice-")) {
             this.handleVoiceMessage(msg);
           } else {
             this.messageHandler?.(msg);
@@ -302,26 +471,10 @@ export class MultiplayerPeer {
           reliable: true,
         });
 
-        // Access the underlying RTCPeerConnection and log ICE config
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const anyConn = conn as any;
-        const pc =
-          anyConn.peerConnection ||
-          anyConn._pc ||
-          anyConn.provider?.peerConnection;
-        if (pc) {
-          log(
-            "joinHost",
-            "peerConnection ICE servers:",
-            JSON.stringify(pc.getConfiguration?.()?.iceServers?.map((s: any) => s.urls) || "unknown")
-          );
-        }
-
         this.conn = conn;
 
         conn.on("open", () => {
           log("joinHost", "data channel open");
-          this.setupVoiceReceivers();
           this.statusHandler?.("connected");
           this.connectHandler?.();
           resolve();
@@ -329,7 +482,7 @@ export class MultiplayerPeer {
 
         conn.on("data", (data: unknown) => {
           const msg = data as MultiplayerMessage;
-          if (msg.type === "voice-start" || msg.type === "voice-stop") {
+          if (msg.type.startsWith("voice-")) {
             this.handleVoiceMessage(msg);
           } else {
             this.messageHandler?.(msg);
@@ -371,6 +524,8 @@ export class MultiplayerPeer {
     });
   }
 
+  // ── Messaging ──────────────────────────────────────────────────────
+
   send(msg: MultiplayerMessage): boolean {
     if (this.conn && this.conn.open) {
       this.conn.send(msg);
@@ -404,11 +559,7 @@ export class MultiplayerPeer {
   }
 
   disconnect(): void {
-    this.disableVoice();
-    if (this.remoteAudioEl) {
-      this.remoteAudioEl.srcObject = null;
-      this.remoteAudioEl = null;
-    }
+    this.cleanupVoice();
     if (this.conn) {
       this.conn.close();
       this.conn = null;
