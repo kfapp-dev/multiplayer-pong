@@ -9,6 +9,20 @@ export function isAudioEnabled(): boolean {
   return audioEnabled;
 }
 
+/**
+ * Unlock the AudioContext — must be called from a user gesture (click/touch).
+ * On iOS Safari, AudioContext starts in 'suspended' state and can only be
+ * resumed inside a user gesture handler.
+ */
+export function unlockAudio(): void {
+  if (!audioCtx) {
+    audioCtx = new AudioContext();
+  }
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+}
+
 function getAudioContext(): AudioContext {
   if (!audioCtx) {
     audioCtx = new AudioContext();
@@ -20,10 +34,6 @@ function playTone(frequency: number, duration: number, volume: number = 0.15, ty
   if (!audioEnabled) return;
   try {
     const ctx = getAudioContext();
-    // Resume if suspended (autoplay policy)
-    if (ctx.state === "suspended") {
-      ctx.resume();
-    }
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = type;
