@@ -1,4 +1,13 @@
 let audioCtx: AudioContext | null = null;
+let audioEnabled = false;
+
+export function setAudioEnabled(enabled: boolean): void {
+  audioEnabled = enabled;
+}
+
+export function isAudioEnabled(): boolean {
+  return audioEnabled;
+}
 
 function getAudioContext(): AudioContext {
   if (!audioCtx) {
@@ -8,8 +17,13 @@ function getAudioContext(): AudioContext {
 }
 
 function playTone(frequency: number, duration: number, volume: number = 0.15, type: OscillatorType = "square"): void {
+  if (!audioEnabled) return;
   try {
     const ctx = getAudioContext();
+    // Resume if suspended (autoplay policy)
+    if (ctx.state === "suspended") {
+      ctx.resume();
+    }
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = type;

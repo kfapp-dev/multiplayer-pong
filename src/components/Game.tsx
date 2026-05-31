@@ -22,6 +22,7 @@ import {
   playScore,
   playWin,
   playLose,
+  setAudioEnabled,
 } from "@/game/sounds";
 import { MultiplayerPeer } from "@/multiplayer/peer";
 
@@ -217,8 +218,17 @@ export default function Game() {
   const [connStatus, setConnStatus] = useState("");
   const [micEnabled, setMicEnabled] = useState(false);
   const [remoteVoiceActive, setRemoteVoiceActive] = useState(false);
+  const [audioEnabled, setAudioEnabledState] = useState(false);
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
+
+  const toggleAudio = useCallback(() => {
+    setAudioEnabledState((prev) => {
+      const next = !prev;
+      setAudioEnabled(next);
+      return next;
+    });
+  }, []);
 
   // ── Init single player ──────────────────────────────────────────────
   const initSinglePlayer = useCallback(() => {
@@ -241,6 +251,8 @@ export default function Game() {
     setConnStatus("");
     setMicEnabled(false);
     setRemoteVoiceActive(false);
+    setAudioEnabledState(false);
+    setAudioEnabled(false);
   }, []);
 
   // ── Start hosting ───────────────────────────────────────────────────
@@ -647,39 +659,62 @@ export default function Game() {
 
       {/* Square game canvas */}
       <div className="flex-1 min-h-0 relative">
-        {/* Mic button — top right, multiplayer connected only */}
+        {/* Mic + Audio buttons — top right, vertical stack, multiplayer connected only */}
         {mode !== "single" && !showQR && !showWinTarget && !disconnected && peerRef.current?.connected && (
-          <button
-            onClick={async () => {
-              const peer = peerRef.current;
-              if (!peer) return;
-              if (micEnabled) {
-                peer.disableVoice();
-                setMicEnabled(false);
-              } else {
-                const ok = await peer.enableVoice();
-                if (ok) setMicEnabled(true);
-              }
-            }}
-            className="absolute top-3 right-3 z-30 bg-black/60 border border-gray-600 rounded-full w-11 h-11 flex items-center justify-center active:bg-gray-800"
-            title={micEnabled ? "Mute microphone" : "Enable voice chat"}
-          >
-            {micEnabled ? (
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="#4ade80" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                <line x1="12" y1="19" x2="12" y2="23" />
-                <line x1="8" y1="23" x2="16" y2="23" />
-              </svg>
-            ) : (
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                <line x1="12" y1="19" x2="12" y2="23" />
-                <line x1="8" y1="23" x2="16" y2="23" />
-              </svg>
-            )}
-          </button>
+          <div className="absolute top-3 right-3 z-30 flex flex-col gap-2">
+            {/* Mic button */}
+            <button
+              onClick={async () => {
+                const peer = peerRef.current;
+                if (!peer) return;
+                if (micEnabled) {
+                  peer.disableVoice();
+                  setMicEnabled(false);
+                } else {
+                  const ok = await peer.enableVoice();
+                  if (ok) setMicEnabled(true);
+                }
+              }}
+              className="bg-black/60 border border-gray-600 rounded-full w-11 h-11 flex items-center justify-center active:bg-gray-800"
+              title={micEnabled ? "Mute microphone" : "Enable voice chat"}
+            >
+              {micEnabled ? (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="#4ade80" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="23" />
+                  <line x1="8" y1="23" x2="16" y2="23" />
+                </svg>
+              ) : (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="23" />
+                  <line x1="8" y1="23" x2="16" y2="23" />
+                </svg>
+              )}
+            </button>
+            {/* Audio / Sound effects toggle */}
+            <button
+              onClick={toggleAudio}
+              className="bg-black/60 border border-gray-600 rounded-full w-11 h-11 flex items-center justify-center active:bg-gray-800"
+              title={audioEnabled ? "Mute sound effects" : "Enable sound effects"}
+            >
+              {audioEnabled ? (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="#4ade80" />
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                </svg>
+              ) : (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <line x1="23" y1="9" x2="17" y2="15" />
+                  <line x1="17" y1="9" x2="23" y2="15" />
+                </svg>
+              )}
+            </button>
+          </div>
         )}
         {/* Remote voice indicator */}
         {remoteVoiceActive && (
@@ -698,15 +733,42 @@ export default function Game() {
         />
       </div>
 
-      {/* Reset score — single player only */}
+      {/* Bottom bar — single player only */}
       {mode === "single" && !showWinTarget && !showQR && (
-        <div className="w-full flex justify-center py-2 shrink-0">
+        <div className="w-full flex justify-center items-center gap-4 py-2 shrink-0">
+          {/* Pause / Play toggle */}
+          <button
+            onClick={() => {
+              stateRef.current.paused = !stateRef.current.paused;
+              // Force a re-render so the pause icon updates
+              setMode((m) => m);
+            }}
+            className="text-gray-500 font-mono text-sm py-2 px-4 active:text-gray-300 flex items-center gap-2"
+          >
+            {stateRef.current.paused ? (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+                Play
+              </>
+            ) : (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                  <rect x="6" y="4" width="4" height="16" />
+                  <rect x="14" y="4" width="4" height="16" />
+                </svg>
+                Pause
+              </>
+            )}
+          </button>
+          <span className="text-gray-700 text-xs">|</span>
           <button
             onClick={() => {
               stateRef.current.score1 = 0;
               stateRef.current.score2 = 0;
             }}
-            className="text-gray-500 font-mono text-sm py-2 px-6 active:text-gray-300"
+            className="text-gray-500 font-mono text-sm py-2 px-4 active:text-gray-300"
           >
             Reset Score
           </button>
