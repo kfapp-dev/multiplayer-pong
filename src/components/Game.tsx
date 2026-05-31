@@ -575,6 +575,20 @@ export default function Game() {
     return () => window.removeEventListener("resize", onResize);
   }, [mode]);
 
+  // ── Unlock audio on any user interaction ───────────────────────────
+  // iOS Safari requires a user gesture to resume AudioContext.
+  // Unlock on any pointer down or keyboard event so sound effects
+  // work even if the player never clicks the audio button explicitly.
+  useEffect(() => {
+    const unlock = () => unlockAudio();
+    window.addEventListener("pointerdown", unlock, { once: false });
+    window.addEventListener("keydown", unlock, { once: false });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
+
   // ── Keyboard ───────────────────────────────────────────────────────
   useEffect(() => {
     const down = (e: KeyboardEvent) => { keysRef.current.add(e.key); };
@@ -650,10 +664,10 @@ export default function Game() {
 
       {/* Button bar at top */}
       {mode === "single" && !showWinTarget && !showQR && (
-        <div className="w-full flex justify-center py-2 shrink-0">
+        <div className="w-full flex justify-center py-1.5 shrink-0">
           <button
             onClick={() => setShowWinTarget(true)}
-            className="bg-white text-black font-mono text-base py-2 px-6 rounded-xl font-bold active:bg-gray-300"
+            className="bg-white text-black font-mono text-sm py-1.5 px-5 rounded-xl font-bold active:bg-gray-300"
           >
             Start Multiplayer Session
           </button>
@@ -739,26 +753,24 @@ export default function Game() {
 
       {/* Bottom bar — single player only */}
       {mode === "single" && !showWinTarget && !showQR && (
-        <div className="w-full flex justify-center items-center gap-4 py-2 shrink-0">
-          {/* Pause / Play toggle */}
+        <div className="w-full flex justify-center items-center gap-3 py-1.5 shrink-0">
           <button
             onClick={() => {
               stateRef.current.paused = !stateRef.current.paused;
-              // Force a re-render so the pause icon updates
               setMode((m) => m);
             }}
-            className="text-gray-500 font-mono text-sm py-2 px-4 active:text-gray-300 flex items-center gap-2"
+            className="text-gray-500 font-mono text-xs py-1.5 px-3 active:text-gray-300 flex items-center gap-1.5"
           >
             {stateRef.current.paused ? (
               <>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                   <polygon points="5 3 19 12 5 21 5 3" />
                 </svg>
                 Play
               </>
             ) : (
               <>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                   <rect x="6" y="4" width="4" height="16" />
                   <rect x="14" y="4" width="4" height="16" />
                 </svg>
@@ -766,15 +778,15 @@ export default function Game() {
               </>
             )}
           </button>
-          <span className="text-gray-700 text-xs">|</span>
+          <span className="text-gray-700 text-[10px]">|</span>
           <button
             onClick={() => {
               stateRef.current.score1 = 0;
               stateRef.current.score2 = 0;
             }}
-            className="text-gray-500 font-mono text-sm py-2 px-4 active:text-gray-300"
+            className="text-gray-500 font-mono text-xs py-1.5 px-3 active:text-gray-300"
           >
-            Reset Score
+            Reset
           </button>
         </div>
       )}
